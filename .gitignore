@@ -18,3 +18,9 @@ data/*.pkl
 
 # Логи
 *.log
+
+.venv/
+
+*.pyc
+.vscode/
+.idea/
