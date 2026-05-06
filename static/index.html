@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>Доктор Хауз | Семейный психолог</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <h1>🧑‍⚕️ Доктор Хауз</h1>
+            <p class="subtitle">Семейный психолог онлайн</p>
+        </header>
+
+        <!-- Блок выбора роли и кнопки действий -->
+        <div class="role-selector">
+            <span>Ваша роль:</span>
+            <div class="role-buttons">
+                <button data-role="муж">👨 Муж</button>
+                <button data-role="жена">👩 Жена</button>
+                <button data-role="пара">💑 Пара</button>
+                <button data-role="ребёнок">🧒 Ребёнок</button>
+            </div>
+        </div>
+
+        <div class="action-buttons">
+            <button id="moodBtn" class="action-btn">😊 Дневник настроения</button>
+            <a href="/forum.html" class="forum-link">📖 Форум</a>
+            <button id="adviceBtn" class="action-btn">💡 Совет дня</button>
+            <button id="clearHistoryBtn" class="action-btn clear-btn">🗑️ Очистить историю</button>
+        </div>
+
+        <!-- Окно чата -->
+        <div class="chat-window" id="chatWindow">
+            <div class="message bot-message">
+                Здравствуйте! Я Доктор Хауз, семейный психолог. Выберите роль и задайте вопрос. Как я могу помочь?
+            </div>
+        </div>
+
+        <!-- Панель ввода -->
+        <div class="input-area">
+            <button id="voiceBtn" class="voice-btn" title="Голосовой ввод">🎤</button>
+            <input type="text" id="messageInput" placeholder="Напишите ваш вопрос..." autocomplete="off">
+            <button id="sendBtn">Отправить</button>
+        </div>
+        <div class="status" id="status"></div>
+    </div>
+
+    <!-- Модальное окно для дневника настроения -->
+    <div id="moodModal" class="modal">
+       <div class="modal-content">
+           <span class="close">&times;</span>
+           <h3>Как ваше настроение?</h3>
+           <div class="mood-rating">
+               <span data-mood="1">😢</span>
+               <span data-mood="2">😕</span>
+               <span data-mood="3">😐</span>
+               <span data-mood="4">🙂</span>
+               <span data-mood="5">😊</span>
+           </div>
+           <div id="selectedMoodText" style="margin: 5px 0; font-size: 0.9rem; color: #2c3e66;">(оценка не выбрана)</div>
+           <textarea id="moodNote" placeholder="Добавьте заметку (необязательно)"></textarea>
+           <button id="saveMoodBtn">Сохранить</button>
+       </div>
+    </div>
+
+    <script src="/script.js"></script>
+</body>
+</html>

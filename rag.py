@@ -20,17 +20,70 @@ def get_searcher():
     return _searcher
 
 
+def is_refusal(text: str) -> bool:
+    """Проверяет, является ли ответ отказом от YandexGPT."""
+    refusal_phrases = [
+        "не могу обсуждать", "не могу ответить", "не могу дать ответ",
+        "извините, я не могу", "не в моей компетенции", "не могу комментировать",
+        "не могу говорить на эту тему", "не могу обсуждать эту тему",
+        "не могу помочь", "я не могу", "отказываюсь"
+    ]
+    lower_text = text.lower()
+    return any(phrase in lower_text for phrase in refusal_phrases)
+
+
+def build_fallback_answer(query: str, context_chunks: list, role: str) -> str:
+    """
+    Формирует ответ из базы знаний, если YandexGPT отказался отвечать.
+    """
+    # Проверяем ключевые слова для добавления телефонов доверия
+    needs_help = any(kw in query.lower() for kw in [
+        "насили", "бьёт", "агресс", "побои", "рукоприклад", "угрожа",
+        "пьёт", "алкоголь", "не разговаривает", "птср", "сво", "ветеран"
+    ])
+
+    if context_chunks:
+        answer = (
+            "Я не могу самостоятельно дать ответ на этот вопрос, но вот информация из моей базы знаний, "
+            "которая может помочь:\n\n"
+        )
+        for i, chunk in enumerate(context_chunks[:3], 1):
+            # Убираем теги #... из начала для читаемости
+            clean_chunk = chunk
+            if chunk.startswith('#'):
+                lines = chunk.split('\n', 1)
+                if len(lines) > 1:
+                    clean_chunk = lines[1]
+            answer += f"**{i}.** {clean_chunk}\n\n"
+
+        if needs_help:
+            answer += (
+                "❗ **Если вы или ваши близкие подвергаются насилию, немедленно обратитесь за помощью:**\n"
+                "- **112** (единая служба спасения)\n"
+                "- **8-800-2000-122** (детский телефон доверия)\n"
+                "- **051** (горячая линия для участников СВО и их семей)\n"
+                "- Центр социальной поддержки семьи (по месту жительства)\n\n"
+                "Помните: насилие недопустимо, вы не одни. ✅"
+            )
+        return answer
+    else:
+        return (
+            "Извините, я не могу ответить на этот вопрос через интернет, "
+            "но вы можете обратиться к психологу очно или по телефону доверия **8-800-2000-122**. "
+            "Ваша ситуация важна, помощь рядом."
+        )
+
+
 async def generate_answer(query: str, context_chunks: list, role: str, user_id: int = None) -> str:
+    """Генерирует ответ с использованием YandexGPT и поиска Tavily, с fallback при отказе."""
     # Проверка кеша
     cache_key = (query, role)
     if cache_key in cache:
         logger.info(f"✅ Ответ взят из кеша для запроса: {query[:50]}...")
         return cache[cache_key]
-    """
-    Генерирует ответ с использованием YandexGPT и Tavily поиска.
-    """
+
     if not YC_USE_GPT:
-        # Режим без ИИ (заглушка)
+        # Режим без ИИ (только база знаний)
         if not context_chunks:
             return "К сожалению, в моей базе знаний пока нет ответа на этот вопрос."
 
@@ -70,16 +123,25 @@ async def generate_answer(query: str, context_chunks: list, role: str, user_id: 
             temperature=0.7,
             max_tokens=2500,
             search_results=search_results_text,
-            user_id=user_id,  # передаём
-            role=role  # и роль
+            user_id=user_id,
+            role=role
         )
+
+        # ПРОВЕРКА НА ОТКАЗ
+        if is_refusal(answer):
+            logger.warning(f"YandexGPT вернул отказ: {answer[:100]}")
+            # Используем fallback из базы знаний
+            fallback = build_fallback_answer(query, context_chunks, role)
+            # Кешируем fallback
+            cache[cache_key] = fallback
+            return fallback
 
         if answer.startswith(("Ошибка", "Извините", "Произошла ошибка")):
             logger.warning(f"YandexGPT вернул ошибку: {answer[:100]}")
         else:
             logger.info("YandexGPT ответил успешно")
-        cache[cache_key] = answer
 
+        cache[cache_key] = answer
         return answer
 
     except asyncio.TimeoutError:

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Форум поддержки | Доктор Хауз</title>
+    <link rel="stylesheet" href="/forum.css">
+</head>
+<body>
+    <div class="forum-container">
+        <header>
+            <h1>🧑‍⚕️ Форум Доктора Хауза</h1>
+            <a href="/" class="home-link">← Вернуться в чат</a>
+        </header>
+
+        <div class="forum-controls">
+            <button id="newTopicBtn" class="primary-btn">➕ Создать новую тему</button>
+        </div>
+
+        <div id="topicsList" class="topics-list">
+            <!-- Здесь динамически загружаются темы -->
+        </div>
+    </div>
+
+    <!-- Модальное окно новой темы -->
+    <div id="topicModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h3>Новая тема</h3>
+            <input type="text" id="topicTitle" placeholder="Заголовок" maxlength="200">
+            <textarea id="topicContent" placeholder="Опишите вашу ситуацию..." rows="5"></textarea>
+            <button id="submitTopicBtn" class="primary-btn">Опубликовать</button>
+        </div>
+    </div>
+
+    <script src="/forum.js"></script>
+</body>
+</html>

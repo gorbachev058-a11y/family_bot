@@ -67,6 +67,29 @@ class KnowledgeBase:
         self.index.add(embeddings)
         logger.info(f"Индекс построен, {len(self.chunks)} чанков.")
 
+    def hybrid_search(self, query: str, top_k: int = 5, keyword_weight: float = 0.3):
+        """Гибридный поиск: эмбеддинги + ключевые слова"""
+        # Сначала эмбеддинг-поиск
+        emb_results = self.search(query, top_k=top_k * 2)  # берём больше кандидатов
+
+        # Простая фильтрация по ключевым словам из запроса
+        keywords = set(query.lower().split())
+        important_keywords = {'дочк', 'разговарива', 'молчит', 'ребенк', 'дет', 'общени'}
+
+        scored = []
+        for chunk in emb_results:
+            score = 0
+            chunk_lower = chunk.lower()
+            # Бонус за важные ключевые слова
+            for kw in important_keywords:
+                if kw in chunk_lower:
+                    score += 0.2
+            scored.append((score, chunk))
+
+        # Сортируем по бонусу и берём top_k
+        scored.sort(reverse=True, key=lambda x: x[0])
+        return [chunk for score, chunk in scored[:top_k]]
+
     def search(self, query: str, top_k: int = 5):
         """
         Ищет top_k похожих чанков. Возвращает оригинальные чанки (с тегами).
@@ -84,15 +107,14 @@ class KnowledgeBase:
         search_k = min(top_k, self.index.ntotal)
         scores, indices = self.index.search(query_emb, search_k)
 
-        # Логируем результаты
-        logger.info(f"Найдено {len(indices[0])} чанков")
-        for i, (score, idx) in enumerate(zip(scores[0], indices[0])):
-            preview = self.chunks[idx][:100].replace('\n', ' ') + "..."
-            logger.info(f"  {i + 1}. Оценка: {score:.4f} - Индекс: {idx} - {preview}")
-
-        # Формируем результаты
         results = []
-        for idx in indices[0]:
-            results.append(self.chunks[idx])
+        logger.info(f"📊 Найдено {len(indices[0])} чанков")
+        for i, (score, idx) in enumerate(zip(scores[0], indices[0])):
+            chunk_text = self.chunks[idx]
+            # Логируем оценку, индекс и начало чанка (без лишних переносов)
+            preview = chunk_text[:200].replace('\n', ' ') + "..." if len(chunk_text) > 200 else chunk_text.replace('\n',
+                                                                                                                   ' ')
+            logger.info(f"  {i + 1}. Оценка: {score:.4f} | Индекс: {idx} | Текст: {preview}")
+            results.append(chunk_text)
 
         return results

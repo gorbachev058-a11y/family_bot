@@ -1,0 +1,278 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    background: #e9f0f5;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.app-container {
+    max-width: 800px;
+    width: 90%;
+    height: 90vh;
+    background: white;
+    border-radius: 24px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+header {
+    background: #2c3e66;
+    color: white;
+    padding: 1rem;
+    text-align: center;
+}
+
+header h1 {
+    font-size: 1.6rem;
+    font-weight: 500;
+}
+
+.subtitle {
+    font-size: 0.8rem;
+    opacity: 0.9;
+}
+
+.role-selector {
+    background: #f4f7fc;
+    padding: 0.8rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    border-bottom: 1px solid #ddd;
+}
+
+.role-buttons {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.role-buttons button {
+    background: #e2e8f0;
+    border: none;
+    padding: 0.4rem 0.8rem;
+    border-radius: 40px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+}
+
+.role-buttons button.active {
+    background: #2c3e66;
+    color: white;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.5rem;
+    background: #f4f7fc;
+    border-bottom: 1px solid #ddd;
+    flex-wrap: wrap;
+}
+
+.action-btn {
+    background: #5a6e8a;
+    color: white;
+    border: none;
+    padding: 0.4rem 0.8rem;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: 0.2s;
+}
+
+.action-btn:hover {
+    background: #2c3e66;
+}
+
+.clear-btn {
+    background: #e74c3c;
+}
+
+.clear-btn:hover {
+    background: #c0392b;
+}
+
+.chat-window {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+    background: #ffffff;
+}
+
+.message {
+    max-width: 80%;
+    padding: 0.7rem 1rem;
+    border-radius: 18px;
+    line-height: 1.4;
+    font-size: 0.95rem;
+    word-wrap: break-word;
+}
+
+.user-message {
+    align-self: flex-end;
+    background: #2c3e66;
+    color: white;
+    border-bottom-right-radius: 4px;
+}
+
+.bot-message {
+    align-self: flex-start;
+    background: #f0f2f5;
+    color: #1e2a3a;
+    border-bottom-left-radius: 4px;
+}
+
+.input-area {
+    display: flex;
+    padding: 0.8rem;
+    gap: 0.5rem;
+    border-top: 1px solid #ddd;
+    background: white;
+}
+
+#messageInput {
+    flex: 1;
+    padding: 0.7rem;
+    border: 1px solid #ccc;
+    border-radius: 40px;
+    font-size: 1rem;
+    outline: none;
+}
+
+#messageInput:focus {
+    border-color: #2c3e66;
+}
+
+#sendBtn, .voice-btn {
+    background: #2c3e66;
+    color: white;
+    border: none;
+    padding: 0 1rem;
+    border-radius: 40px;
+    cursor: pointer;
+    font-size: 1rem;
+    transition: 0.2s;
+}
+
+#sendBtn:hover, .voice-btn:hover {
+    background: #1f2c4a;
+}
+
+.voice-btn {
+    background: #5a6e8a;
+    font-size: 1.2rem;
+    padding: 0 0.8rem;
+}
+
+.status {
+    font-size: 0.75rem;
+    text-align: center;
+    color: #666;
+    padding: 0.2rem;
+}
+
+/* Модальное окно */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+}
+
+.modal-content {
+    background: white;
+    margin: 15% auto;
+    padding: 20px;
+    width: 90%;
+    max-width: 400px;
+    border-radius: 16px;
+    text-align: center;
+}
+
+.close {
+    float: right;
+    font-size: 28px;
+    cursor: pointer;
+}
+
+.mood-rating {
+    display: flex;
+    justify-content: space-around;
+    font-size: 2rem;
+    margin: 1rem 0;
+    cursor: pointer;
+}
+
+.mood-rating span {
+    padding: 0.5rem;
+    transition: 0.2s;
+    cursor: pointer;
+    border-radius: 50%;
+}
+
+.mood-rating span.selected {
+    background-color: #2c3e66;
+    color: white;
+    transform: scale(1.1);
+    box-shadow: 0 0 0 2px #ffd966;
+}
+
+#moodNote {
+    width: 100%;
+    height: 80px;
+    margin: 1rem 0;
+    padding: 0.5rem;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    resize: vertical;
+}
+
+#saveMoodBtn {
+    background: #2c3e66;
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 20px;
+    cursor: pointer;
+}
+
+@media (max-width: 500px) {
+    .role-selector {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .message {
+        max-width: 90%;
+    }
+
+    .forum-link {
+        background: #5a6e8a;
+        color: white;
+        text-decoration: none;
+        padding: 0.4rem 0.8rem;
+        border-radius: 20px;
+        font-size: 0.85rem;
+    }
+}

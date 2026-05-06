@@ -1,10 +1,8 @@
-aiogram==3.4.1
-sentence-transformers==2.2.2
-huggingface_hub==0.16.4          # фиксируем старую версию, где есть cached_download
-faiss-cpu==1.7.4
-openai==1.12.0
-python-dotenv==1.0.0
-pydub==0.25.1
-SpeechRecognition==3.10.0
-numpy
-torch                            # будет установлена совместимая версия
+aiogram>=3.13.0
+pydantic>=2.10.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+httpx>=0.27.0
+sentence-transformers>=2.2.2
+faiss-cpu>=1.8.0
+python-dotenv>=1.0.0
