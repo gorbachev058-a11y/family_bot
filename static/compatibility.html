@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Совместимость пары</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f0f2f5; }
+        .container { max-width: 600px; margin: auto; background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        button { margin: 5px; padding: 10px 15px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        #result { display: none; margin-top: 15px; }
+        a { display: block; margin-top: 10px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>Совместимость пары</h2>
+    <div id="question-area">
+        <p id="question-text"></p>
+        <button onclick="answer('а')">а</button>
+        <button onclick="answer('б')">б</button>
+        <button onclick="answer('в')">в</button>
+    </div>
+    <div id="result">
+        <h3>Результаты</h3>
+        <p id="result-text"></p>
+        <button onclick="location.reload()">Пройти заново</button>
+    </div>
+    <a href="/static/index.html">На главную</a>
+</div>
+<script>
+    const questions = [
+        "Как вы проводите свободное время?\nа) Вместе, это всегда интересно\nб) Иногда вместе, иногда порознь\nв) Чаще порознь, у каждого свои увлечения",
+        "Как вы решаете конфликты?\nа) Спокойно обсуждаем, ищем компромисс\nб) Иногда ссоримся, но быстро миримся\nв) Часто спорим, каждый стоит на своём",
+        "Насколько вы доверяете партнёру?\nа) Полностью доверяю\nб) Доверяю, но бывают сомнения\nв) Есть серьёзные проблемы с доверием",
+        "Как у вас обстоят дела с общими целями?\nа) Есть общие планы на будущее\nб) Обсуждаем, но не всегда совпадаем\nв) У каждого свои цели, не пересекаются",
+        "Чувствуете ли вы эмоциональную поддержку?\nа) Да, всегда\nб) Иногда не хватает\nв) Редко или никогда"
+    ];
+    let idx = 0;
+    let scores = [];
+    function updateUI() {
+        if (idx < questions.length) {
+            document.getElementById('question-text').innerText = questions[idx];
+        } else {
+            submitResults();
+        }
+    }
+    function answer(letter) {
+        let score;
+        if (letter === 'а') score = 2;
+        else if (letter === 'б') score = 1;
+        else score = 0;
+        scores.push(score);
+        idx++;
+        updateUI();
+    }
+    async function submitResults() {
+        document.getElementById('question-area').style.display = 'none';
+        const res = await fetch('/api/tests/compatibility', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({scores})
+        });
+        const data = await res.json();
+        document.getElementById('result').style.display = 'block';
+        document.getElementById('result-text').innerText = data.result;
+    }
+    updateUI();
+</script>
+</body>
+</html>

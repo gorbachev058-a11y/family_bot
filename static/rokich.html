@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ценностные ориентации (Рокич)</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; background: #f0f2f5; }
+        .container { max-width: 600px; margin: auto; background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .progress { font-size: 0.9em; color: #666; }
+        label { display: block; margin: 15px 0 5px; font-weight: bold; }
+        input[type="range"] { width: 100%; }
+        .scale-labels { display: flex; justify-content: space-between; font-size: 0.8em; color: #555; }
+        button { margin-top: 15px; padding: 12px 24px; background: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 1em; }
+        button:hover { background: #218838; }
+        #result { margin-top: 20px; padding: 15px; background: #e9f7ef; border-radius: 8px; display: none; }
+        ul { list-style: none; padding: 0; }
+        li { padding: 4px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Ценностные ориентации (Рокич)</h2>
+        <p class="progress" id="progress"></p>
+        <div id="question-area">
+            <label id="question-text"></label>
+            <input type="range" id="score" min="1" max="10" value="5">
+            <div class="scale-labels"><span>1</span><span>10</span></div>
+            <p>Выбранное значение: <span id="score-display">5</span></p>
+            <button onclick="nextStep()">Далее</button>
+        </div>
+        <div id="result">
+            <h3>Результаты</h3>
+            <p><strong>Терминальные ценности (топ-5):</strong></p>
+            <ul id="terminal-list"></ul>
+            <p><strong>Инструментальные ценности (топ-5):</strong></p>
+            <ul id="instrumental-list"></ul>
+            <button onclick="location.reload()">Пройти заново</button>
+        </div>
+    </div>
+
+    <script>
+        const terminalValues = [
+            "Активная деятельная жизнь", "Жизненная мудрость", "Здоровье", "Интересная работа",
+            "Красота природы и искусства", "Любовь", "Материально обеспеченная жизнь",
+            "Наличие хороших и верных друзей", "Общественное признание", "Познание",
+            "Продуктивная жизнь", "Развитие", "Развлечения", "Свобода",
+            "Счастливая семейная жизнь", "Счастье других", "Творчество", "Уверенность в себе"
+        ];
+        const instrumentalValues = [
+            "Аккуратность", "Воспитанность", "Высокие запросы", "Жизнерадостность",
+            "Исполнительность", "Независимость", "Непримиримость к недостаткам", "Образованность",
+            "Ответственность", "Рационализм", "Самоконтроль", "Смелость",
+            "Твердая воля", "Терпимость", "Широта взглядов", "Честность", "Эффективность", "Чуткость"
+        ];
+
+        let stage = 'terminal';  // 'terminal' или 'instrumental'
+        let currentIndex = 0;
+        let terminalScores = {};
+        let instrumentalScores = {};
+
+        function updateUI() {
+            const values = stage === 'terminal' ? terminalValues : instrumentalValues;
+            if (currentIndex < values.length) {
+                document.getElementById('question-area').style.display = 'block';
+                document.getElementById('result').style.display = 'none';
+                document.getElementById('question-text').innerText = values[currentIndex];
+                document.getElementById('progress').innerText = `${currentIndex + 1} из ${values.length}`;
+                const scoreSlider = document.getElementById('score');
+                scoreSlider.value = 5;
+                document.getElementById('score-display').innerText = 5;
+            } else {
+                // Все вопросы заданы — отправляем результат на сервер
+                sendResults();
+            }
+        }
+
+        function nextStep() {
+            const score = parseInt(document.getElementById('score').value);
+            document.getElementById('score-display').innerText = score;
+            const values = stage === 'terminal' ? terminalValues : instrumentalValues;
+            if (stage === 'terminal') {
+                terminalScores[values[currentIndex]] = score;
+                currentIndex++;
+                if (currentIndex >= terminalValues.length) {
+                    stage = 'instrumental';
+                    currentIndex = 0;
+                }
+            } else {
+                instrumentalScores[values[currentIndex]] = score;
+                currentIndex++;
+            }
+            updateUI();
+        }
+
+        document.getElementById('score').addEventListener('input', function() {
+            document.getElementById('score-display').innerText = this.value;
+        });
+
+        async function sendResults() {
+            document.getElementById('question-area').style.display = 'none';
+            const response = await fetch('/api/tests/rokich', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    terminal_scores: terminalScores,
+                    instrumental_scores: instrumentalScores
+                })
+            });
+            const data = await response.json();
+            document.getElementById('result').style.display = 'block';
+            const terminalList = document.getElementById('terminal-list');
+            const instrumentalList = document.getElementById('instrumental-list');
+            terminalList.innerHTML = data.terminal.map(item => `<li>${item[0]} — ${item[1]}/10</li>`).join('');
+            instrumentalList.innerHTML = data.instrumental.map(item => `<li>${item[0]} — ${item[1]}/10</li>`).join('');
+        }
+
+        updateUI();
+    </script>
+</body>
+</html>

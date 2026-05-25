@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Самопринятие</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f0f2f5; }
+        .container { max-width: 600px; margin: auto; background: #fff; padding: 20px; border-radius: 12px; }
+        button { margin: 5px; padding: 10px 15px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; }
+        #result { display: none; margin-top: 15px; }
+        a { display: block; margin-top: 10px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>Самопринятие</h2>
+    <div id="question-area">
+        <p id="question-text"></p>
+        <button onclick="answer('да')">Да</button>
+        <button onclick="answer('нет')">Нет</button>
+    </div>
+    <div id="result">
+        <h3>Результаты</h3>
+        <p id="result-text"></p>
+        <button onclick="location.reload()">Пройти заново</button>
+    </div>
+    <a href="/static/index.html">На главную</a>
+</div>
+<script>
+    const questions = [
+        "Я принимаю себя таким(ой), какой(ая) я есть, со всеми достоинствами и недостатками.",
+        "Мне трудно прощать себя за ошибки.",
+        "Я часто сравниваю себя с другими и чувствую неудовлетворение.",
+        "Я отношусь к себе с добротой и поддержкой, даже когда что-то не получается.",
+        "Мне важно, что думают обо мне другие, и это влияет на моё самоощущение."
+    ];
+    let idx = 0;
+    let answers = [];
+    function updateUI() {
+        if (idx < questions.length) {
+            document.getElementById('question-text').innerText = questions[idx];
+        } else {
+            submitResults();
+        }
+    }
+    function answer(ans) {
+        answers.push(ans);
+        idx++;
+        updateUI();
+    }
+    async function submitResults() {
+        document.getElementById('question-area').style.display = 'none';
+        const res = await fetch('/api/tests/selfacceptance', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({answers})
+        });
+        const data = await res.json();
+        document.getElementById('result').style.display = 'block';
+        document.getElementById('result-text').innerText = data.result;
+    }
+    updateUI();
+</script>
+</body>
+</html>

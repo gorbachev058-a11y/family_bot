@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Стиль воспитания</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f0f2f5; }
+        .container { max-width: 600px; margin: auto; background: #fff; padding: 20px; border-radius: 12px; }
+        button { margin: 5px; padding: 10px 15px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; }
+        #result { display: none; margin-top: 15px; }
+        a { display: block; margin-top: 10px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>Стиль воспитания</h2>
+    <div id="question-area">
+        <p id="question-text"></p>
+        <button onclick="answer('а')">а</button>
+        <button onclick="answer('б')">б</button>
+        <button onclick="answer('в')">в</button>
+    </div>
+    <div id="result">
+        <h3>Результаты</h3>
+        <p id="result-text"></p>
+        <button onclick="location.reload()">Пройти заново</button>
+    </div>
+    <a href="/static/index.html">На главную</a>
+</div>
+<script>
+    const questions = [
+        "Когда ребёнок не слушается, я обычно...\nа) Настаиваю на своём, требую подчинения\nб) Объясняю и стараюсь договориться\nв) Позволяю ему делать что хочет",
+        "Как часто вы хвалите ребёнка?\nа) Только за большие достижения\nб) Часто, даже за мелочи\nв) Редко, чтобы не избаловать",
+        "Если ребёнок пришёл с плохой оценкой...\nа) Строго наказываю\nб) Обсуждаю причины и помогаю исправить\nв) Не обращаю внимания, сам разберётся",
+        "Как вы относитесь к тому, что ребёнок имеет свои секреты?\nа) Считаю, что у детей не должно быть секретов\nб) Уважаю личное пространство, но в разумных пределах\nв) Мне всё равно, пусть делает что хочет",
+        "Если ребёнок спорит со мной...\nа) Пресекаю, последнее слово должно быть за мной\nб) Выслушиваю и объясняю свою позицию\nв) Уступаю, чтобы избежать конфликта"
+    ];
+    let idx = 0;
+    let answers = [];
+    function updateUI() {
+        if (idx < questions.length) {
+            document.getElementById('question-text').innerText = questions[idx];
+        } else {
+            submitResults();
+        }
+    }
+    function answer(letter) {
+        answers.push(letter);
+        idx++;
+        updateUI();
+    }
+    async function submitResults() {
+        document.getElementById('question-area').style.display = 'none';
+        const res = await fetch('/api/tests/parenting', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({answers})
+        });
+        const data = await res.json();
+        document.getElementById('result').style.display = 'block';
+        document.getElementById('result-text').innerText = data.result;
+    }
+    updateUI();
+</script>
+</body>
+</html>

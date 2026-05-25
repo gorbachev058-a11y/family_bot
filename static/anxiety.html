@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Тревожность (опросник)</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f0f2f5; }
+        .container { max-width: 600px; margin: auto; background: #fff; padding: 20px; border-radius: 12px; }
+        button { margin: 5px; padding: 10px 15px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; }
+        #result { display: none; margin-top: 15px; }
+        a { display: block; margin-top: 10px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>Тревожность (опросник)</h2>
+    <div id="question-area">
+        <p id="question-text"></p>
+        <button onclick="answer('да')">Да</button>
+        <button onclick="answer('нет')">Нет</button>
+    </div>
+    <div id="result">
+        <p id="result-text"></p>
+        <button onclick="location.reload()">Пройти заново</button>
+    </div>
+    <a href="/static/index.html">На главную</a>
+</div>
+<script>
+    const questions = [
+        "Ребёнок часто выглядит напряжённым, скованным?",
+        "Легко ли ребёнок плачет, расстраивается?",
+        "Часто ли ребёнок говорит, что боится чего-то (темноты, чужих людей, ошибок)?",
+        "Трудно ли ребёнку успокоиться после замечания?",
+        "Бывает ли, что ребёнок просыпается ночью с плачем?"
+    ];
+    let idx = 0;
+    let answers = [];
+    function updateUI() {
+        if (idx < questions.length) {
+            document.getElementById('question-text').innerText = questions[idx];
+        } else {
+            submitResults();
+        }
+    }
+    function answer(ans) {
+        answers.push(ans);
+        idx++;
+        updateUI();
+    }
+    async function submitResults() {
+        document.getElementById('question-area').style.display = 'none';
+        const res = await fetch('/api/tests/anxiety', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({answers})
+        });
+        const data = await res.json();
+        document.getElementById('result').style.display = 'block';
+        document.getElementById('result-text').innerText = data.result;
+    }
+    updateUI();
+</script>
+</body>
+</html>

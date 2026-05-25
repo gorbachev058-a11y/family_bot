@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Лесенка (самооценка)</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #f0f2f5; }
+        .container { max-width: 600px; margin: auto; background: #fff; padding: 20px; border-radius: 12px; }
+        input[type="number"] { width: 60px; padding: 8px; }
+        button { padding: 10px 15px; background: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer; }
+        #result { display: none; margin-top: 15px; }
+        a { display: block; margin-top: 10px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>Лесенка (самооценка)</h2>
+    <div id="question-area">
+        <p>На какую ступеньку (от 1 до 10) ваш ребёнок поставил бы себя?</p>
+        <input type="number" id="step" min="1" max="10" value="5">
+        <button onclick="submit()">Узнать результат</button>
+    </div>
+    <div id="result">
+        <p id="result-text"></p>
+        <button onclick="location.reload()">Пройти заново</button>
+    </div>
+    <a href="/static/index.html">На главную</a>
+</div>
+<script>
+    async function submit() {
+        const step = parseInt(document.getElementById('step').value);
+        const res = await fetch('/api/tests/ladder', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({step})
+        });
+        const data = await res.json();
+        document.getElementById('question-area').style.display = 'none';
+        document.getElementById('result').style.display = 'block';
+        document.getElementById('result-text').innerText = data.result;
+    }
+</script>
+</body>
+</html>

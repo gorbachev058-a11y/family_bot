@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ценностный опросник Шварца</title>
+    <style>
+        /* стиль как в рокиче, только шкала 1-6 */
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Опросник Шварца</h2>
+        <p class="progress" id="progress"></p>
+        <div id="question-area">
+            <label id="question-text"></label>
+            <input type="range" id="score" min="1" max="6" value="3">
+            <div class="scale-labels"><span>1 (не похож)</span><span>6 (очень похож)</span></div>
+            <p>Значение: <span id="score-display">3</span></p>
+            <button onclick="nextStep()">Далее</button>
+        </div>
+        <div id="result" style="display:none;">
+            <h3>Результаты</h3>
+            <pre id="result-text"></pre>
+            <button onclick="location.reload()">Пройти заново</button>
+        </div>
+    </div>
+    <script>
+        const items = [
+            ["Власть", "Для него/неё важен социальный статус, престиж, доминирование."],
+            ["Достижение", "Для него/неё важен личный успех, общественное признание."],
+            ["Гедонизм", "Для него/неё важны удовольствия, наслаждение жизнью."],
+            ["Стимуляция", "Для него/неё важна новизна, волнение."],
+            ["Самостоятельность", "Для него/неё важна независимость."],
+            ["Универсализм", "Для него/неё важны всеобщее благополучие, справедливость."],
+            ["Доброта", "Для него/неё важна забота о близких."],
+            ["Традиция", "Для него/неё важны уважение обычаев, традиции."],
+            ["Конформность", "Для него/неё важно следование правилам."],
+            ["Безопасность", "Для него/неё важна стабильность, безопасность."]
+        ];
+        let idx = 0;
+        let answers = {};
+        // ... аналогичный код, отправка POST /api/tests/schwartz
+    </script>
+</body>
+</html>

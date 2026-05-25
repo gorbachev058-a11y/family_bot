@@ -1,10 +1,40 @@
 // --- Инициализация ---
-let currentRole = localStorage.getItem('role') || 'муж';
+let currentRole = localStorage.getItem('role') || 'Муж';
 let userId = localStorage.getItem('userId');
 if (!userId) {
     userId = crypto.randomUUID ? crypto.randomUUID() : 'user_' + Date.now() + '_' + Math.random();
     localStorage.setItem('userId', userId);
 }
+
+// Сопоставление устаревших значений ролей
+const roleMapping = {
+    'муж': 'Муж',
+    'жен': 'Жена',
+    'пара': 'Пара',
+    'ребенок': 'Ребёнок'
+};
+currentRole = roleMapping[currentRole] || currentRole;
+localStorage.setItem('role', currentRole);
+
+// Локальный словарь аватаров (синхронизирован с config.py)
+const ROLE_AVATARS = {
+    "Муж": {
+        name: "Соратник",
+        greeting: "Привет. Я Соратник. Сам выгребал из ямы. Давай по делу — что у тебя?"
+    },
+    "Жена": {
+        name: "Доктор Хауз",
+        greeting: "Доктор Хауз на связи. Сопли вытру позже, сначала разберем факты. Что случилось?"
+    },
+    "Пара": {
+        name: "Доктор Хауз",
+        greeting: "Я Доктор Хауз. Проблемы пар — моя специализация. Кто первый на «операционный стол»?"
+    },
+    "Ребёнок": {
+        name: "Доктор Хауз",
+        greeting: "Доктор Хауз на проводе. Что стряслось у твоего мелкого? Рассказывай как есть."
+    }
+};
 
 // DOM элементы
 const chatWindow = document.getElementById('chatWindow');
@@ -23,19 +53,13 @@ const moodNote = document.getElementById('moodNote');
 const saveMoodBtn = document.getElementById('saveMoodBtn');
 const selectedMoodTextEl = document.getElementById('selectedMoodText');
 
-// Текстовые описания оценок
 const moodTexts = ['😢 Ужасно (1)', '😕 Плохо (2)', '😐 Нормально (3)', '🙂 Хорошо (4)', '😊 Отлично (5)'];
-
 let selectedMood = null;
 
-// --- Вспомогательные функции UI ---
+// --- Вспомогательные функции ---
 function setActiveRoleButton(role) {
     roleButtons.forEach(btn => {
-        if (btn.getAttribute('data-role') === role) {
-            btn.classList.add('active');
-        } else {
-            btn.classList.remove('active');
-        }
+        btn.classList.toggle('active', btn.getAttribute('data-role') === role);
     });
 }
 
@@ -58,17 +82,26 @@ function addSystemMessage(text) {
 }
 
 // --- Смена роли ---
-function changeRole(role) {
+async function changeRole(role) {
     currentRole = role;
     localStorage.setItem('role', role);
     setActiveRoleButton(role);
-    addSystemMessage(`Роль изменена на "${role}". Задайте свой вопрос.`);
+
+    // очищаем историю на сервере
+    await fetch(`/clear_history?user_id=${userId}`, { method: 'POST' });
+
+    // Показываем приветствие из локального словаря
+    const avatar = ROLE_AVATARS[role] || ROLE_AVATARS["Муж"];
+    addMessage(avatar.greeting, false);
 }
 
+// Обработчик кнопок выбора роли
 roleButtons.forEach(btn => {
     btn.addEventListener('click', () => {
         const newRole = btn.getAttribute('data-role');
-        if (newRole !== currentRole) changeRole(newRole);
+        if (newRole && newRole !== currentRole) {
+            changeRole(newRole);
+        }
     });
 });
 
@@ -81,9 +114,10 @@ async function sendMessageToBot(message) {
     statusDiv.textContent = 'Доктор Хауз печатает...';
 
     try {
+        console.log('Отправка на /chat, роль:', currentRole, 'userId:', userId);
         const response = await fetch('/chat', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 message: message,
                 role: currentRole,
@@ -94,8 +128,8 @@ async function sendMessageToBot(message) {
         const data = await response.json();
         addMessage(data.response, false);
     } catch (error) {
-        console.error('Ошибка:', error);
-        addMessage('Извините, произошла ошибка. Попробуйте позже.', false);
+        console.error('Ошибка чата:', error);
+        addMessage('⚠️ Извините, произошла ошибка. Попробуйте позже.', false);
     } finally {
         statusDiv.textContent = '';
     }
@@ -131,15 +165,13 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
         messageInput.value = transcript;
         statusDiv.textContent = '';
         voiceBtn.disabled = false;
-        // Раскомментируйте, если хотите автоматически отправлять распознанное
-        // sendMessageToBot(transcript);
     };
 
     recognition.onerror = (event) => {
-        console.error('Ошибка голоса', event.error);
-        statusDiv.textContent = 'Ошибка распознавания';
+        console.error('Ошибка распознавания:', event.error);
+        statusDiv.textContent = 'Ошибка распознавания речи';
         voiceBtn.disabled = false;
-        setTimeout(() => { if (statusDiv.textContent === 'Ошибка распознавания') statusDiv.textContent = ''; }, 2000);
+        setTimeout(() => { statusDiv.textContent = ''; }, 2000);
     };
 
     recognition.onend = () => {
@@ -148,16 +180,15 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
     };
 } else {
     voiceBtn.style.display = 'none';
+    console.warn('Web Speech API не поддерживается');
 }
 
-// --- Функции модалки настроения ---
+// --- Модалка настроения ---
 function openMoodModal() {
     moodModal.style.display = 'block';
     selectedMood = null;
     moodNote.value = '';
-    // Сброс подсветки
     moodRatingSpans.forEach(span => span.classList.remove('selected'));
-    // Сброс текстовой подсказки
     if (selectedMoodTextEl) selectedMoodTextEl.textContent = '(оценка не выбрана)';
 }
 
@@ -175,41 +206,35 @@ window.addEventListener('click', (e) => {
     if (e.target === moodModal) closeMoodModal();
 });
 
-// Обработка клика по смайлам
 moodRatingSpans.forEach((span, index) => {
     span.addEventListener('click', () => {
-        // Снимаем выделение со всех
         moodRatingSpans.forEach(s => s.classList.remove('selected'));
         span.classList.add('selected');
         selectedMood = parseInt(span.getAttribute('data-mood'));
-        // Показываем текстовое описание
         if (selectedMoodTextEl) {
-            selectedMoodTextEl.textContent = `✓ Выбрано: ${moodTexts[selectedMood-1]}`;
+            selectedMoodTextEl.textContent = `✓ Выбрано: ${moodTexts[selectedMood - 1]}`;
         }
-        // Дополнительно в статусной строке
-        statusDiv.textContent = `Выбрано: ${moodTexts[selectedMood-1]}`;
+        statusDiv.textContent = `Выбрано: ${moodTexts[selectedMood - 1]}`;
         setTimeout(() => {
-            if (statusDiv.textContent === `Выбрано: ${moodTexts[selectedMood-1]}`) statusDiv.textContent = '';
+            if (statusDiv.textContent === `Выбрано: ${moodTexts[selectedMood - 1]}`) statusDiv.textContent = '';
         }, 2000);
     });
 });
 
-// Сохранение настроения
 if (saveMoodBtn) {
     saveMoodBtn.addEventListener('click', async () => {
         if (!selectedMood) {
             alert('Пожалуйста, выберите оценку настроения');
             return;
         }
-        const note = moodNote.value;
         try {
             const response = await fetch('/mood', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
                     user_id: userId,
                     mood: selectedMood,
-                    note: note
+                    note: moodNote.value
                 })
             });
             if (response.ok) {
@@ -219,7 +244,7 @@ if (saveMoodBtn) {
                 addSystemMessage('❌ Ошибка сохранения настроения');
             }
         } catch (error) {
-            console.error(error);
+            console.error('Ошибка сохранения настроения:', error);
             addSystemMessage('❌ Ошибка сохранения настроения');
         }
     });
@@ -238,29 +263,40 @@ if (adviceBtn) {
                 addMessage('Не удалось получить совет дня', false);
             }
         } catch (error) {
-            console.error(error);
+            console.error('Ошибка совета:', error);
             addMessage('Ошибка получения совета', false);
         }
     });
 }
 
-// --- Очистка истории диалога (сессии) ---
+// --- Очистка истории ---
 const clearHistoryBtn = document.getElementById('clearHistoryBtn');
 if (clearHistoryBtn) {
     clearHistoryBtn.addEventListener('click', async () => {
         try {
-            const response = await fetch(`/clear_history?user_id=${userId}`, { method: 'POST' });
+            console.log('Очистка истории для userId:', userId);
+            const response = await fetch(`/clear_history?user_id=${userId}`, {method: 'POST'});
             if (response.ok) {
+                // Очищаем окно чата полностью
+                chatWindow.innerHTML = '';
+                // Добавляем приветствие текущего аватара (как при загрузке)
+                const avatar = ROLE_AVATARS[currentRole] || ROLE_AVATARS["Муж"];
+                addMessage(avatar.greeting, false);
                 addSystemMessage('🗑️ История диалога очищена. Начинаем новый разговор.');
             } else {
                 addSystemMessage('Ошибка очистки истории');
             }
         } catch (error) {
-            console.error(error);
+            console.error('Ошибка очистки истории:', error);
             addSystemMessage('Ошибка очистки истории');
         }
     });
 }
-
-// --- Начальная настройка роли ---
+// --- Инициализация ---
 setActiveRoleButton(currentRole);
+
+// Добавить приветствие при загрузке (если окно чата пусто)
+if (chatWindow.children.length === 0) {
+    const avatar = ROLE_AVATARS[currentRole] || ROLE_AVATARS["Муж"];
+    addMessage(avatar.greeting, false);
+}

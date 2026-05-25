@@ -4,11 +4,12 @@ import logging
 import re
 from collections import defaultdict
 from typing import Optional, List, Dict
-
+from config import ROLE_AVATARS
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from auth_db import init_db, hash_password
 
 # Старые импорты
 from rag import generate_answer, is_refusal
@@ -97,11 +98,57 @@ def save_dialogue(user_id: str, role: str, question: str, answer: str):
     c = conn.cursor()
     c.execute("INSERT INTO dialogues (user_id, role, question, answer) VALUES (?, ?, ?, ?)",
               (user_id, role, question, answer))
+    trial_end = (datetime.now() + timedelta(days=30)).isoformat()
+    c.execute("UPDATE users SET premium_until=? WHERE id=?", (trial_end, user_id))
     conn.commit()
     conn.close()
 
 init_dialogues_db()
 init_forum_db()  # таблицы форума
+
+#==============================
+#Эндпоинты регистрации и входа
+#==============================
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    username: str = ""
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+@app.post("/auth/register")
+async def register(request: RegisterRequest):
+    init_db()
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
+    # Проверка на существование
+    c.execute("SELECT id FROM users WHERE email=?", (request.email,))
+    if c.fetchone():
+        conn.close()
+        raise HTTPException(400, "Email уже используется")
+    pwd = hash_password(request.password)
+    c.execute("INSERT INTO users (email, password_hash, username) VALUES (?,?,?)",
+              (request.email, pwd, request.username))
+    conn.commit()
+    user_id = c.lastrowid
+    conn.close()
+    return {"user_id": user_id, "email": request.email}
+
+@app.post("/auth/login")
+async def login(request: LoginRequest):
+    init_db()
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
+    pwd = hash_password(request.password)
+    c.execute("SELECT id, email, username, telegram_id FROM users WHERE email=? AND password_hash=?",
+              (request.email, pwd))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(401, "Неверные учетные данные")
+    return {"user_id": row[0], "email": row[1], "username": row[2], "telegram_id": row[3]}
 
 # ========================
 # Pydantic модели
@@ -132,19 +179,17 @@ class ClearHistoryResponse(BaseModel):
 # ========================
 # Функции для работы с историей
 # ========================
-def get_conversation_context(user_id: str, max_messages: int = 6) -> str:
+def get_conversation_context(user_id: str, max_messages: int = 4) -> str:
     history = conversation_history.get(user_id, [])
     if not history:
         return ""
     recent = history[-max_messages:]
-    context_lines = ["Вот история нашего диалога:"]
+    lines = ["Краткая предыстория:"]
     for msg in recent:
         if msg["role"] == "user":
-            context_lines.append(f"Пользователь: {msg['content']}")
-        else:
-            context_lines.append(f"Доктор Хауз: {msg['content']}")
-    context_lines.append("Учитывая историю, ответь на последний вопрос пользователя.")
-    return "\n".join(context_lines)
+            lines.append(f"- Пользователь: {msg['content']}")
+        # ответы бота не включаем, чтобы не провоцировать повтор
+    return "\n".join(lines)
 
 def add_to_history(user_id: str, user_message: str, bot_response: str):
     history = conversation_history[user_id]
@@ -163,6 +208,8 @@ def clear_history(user_id: str):
 # Функции для работы с именем
 # ========================
 def extract_and_store_name(user_id: str, message: str) -> str:
+    # Слова-стоп, которые не являются именами (бот мог их сказать)
+    stop_words = {"внимание", "привет", "здравствуй"}
     patterns = [
         r"меня зовут\s+([А-Яа-яёЁ\-]+)",
         r"меня звать\s+([А-Яа-яёЁ\-]+)",
@@ -173,12 +220,11 @@ def extract_and_store_name(user_id: str, message: str) -> str:
         match = re.search(pattern, message, re.IGNORECASE)
         if match:
             name = match.group(1).capitalize()
+            if name.lower() in stop_words:
+                continue
             user_names[user_id] = name
             logger.info(f"Сохранили имя {name} для user_id {user_id}")
             return name
-    return user_names.get(user_id, "")
-
-def get_user_name(user_id: str) -> str:
     return user_names.get(user_id, "")
 
 # ========================
@@ -234,7 +280,7 @@ async def run_async_generate(query: str, role: str, user_id: str) -> str:
             query_with_name = f"Меня зовут {user_name}. {query}"
         else:
             query_with_name = query
-
+        logger.info(f"Генерация для роли: {role}")
         context_chunks = knowledge_base.search(query, top_k=10)
         logger.info(f"Поиск завершён, найдено чанков: {len(context_chunks)}")
 
@@ -263,10 +309,8 @@ async def run_async_generate(query: str, role: str, user_id: str) -> str:
             logger.warning("YandexGPT отказался, используем fallback")
             answer = build_fallback_from_chunks(query, context_chunks, role, user_name)
 
-        if not proactive_shown[user_id] and not any(kw in query.lower() for kw in ["совет", "рекомендац", "помоги", "план"]):
-            proactive_shown[user_id] = True
-            if "Хотите" not in answer and "пошаговый план" not in answer and "расширенны" not in answer:
-                answer += "\n\n💡 **Хотите, я дам вам развёрнутые personalised рекомендации?** Просто спросите: «Дай советы» или «Расскажи подробнее». Я помогу."
+        # === Автоматическая вставка "развёрнутых рекомендаций" ОТКЛЮЧЕНА ===
+        # (блок удалён полностью, чтобы не раздражать пользователей)
 
         add_to_history(user_id, query, answer)
         save_dialogue(user_id, role, query, answer)
@@ -281,6 +325,7 @@ async def run_async_generate(query: str, role: str, user_id: str) -> str:
 # ========================
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
+    logger.info(f"Получен запрос: user={request.user_id}, role={request.role}")
     try:
         answer = await run_async_generate(request.message, request.role, request.user_id)
         return ChatResponse(response=answer)
@@ -295,7 +340,6 @@ async def clear_history_endpoint(user_id: str):
     if user_id in user_names:
         del user_names[user_id]
     return ClearHistoryResponse(status="ok", message="История диалога и имя очищены")
-
 @app.post("/mood")
 async def mood_endpoint(request: MoodRequest):
     try:
@@ -322,6 +366,12 @@ async def advice_endpoint():
     except Exception as e:
         logger.exception("Ошибка получения совета")
         raise HTTPException(status_code=500, detail=str(e))
+
+# Приветствие аватара по роли
+@app.get("/greeting/{role}")
+async def get_greeting(role: str):
+    avatar = ROLE_AVATARS.get(role, ROLE_AVATARS["Муж"])
+    return {"greeting": avatar["greeting"]}
 
 @app.get("/dialogues/{user_id}")
 async def get_dialogues(user_id: str, limit: int = 20):
@@ -451,7 +501,7 @@ async def add_comment_to_kb(comment_id: int, user_id: int, tags: List[str]):
 # Статика
 # ========================
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
-
+app.mount("/docs", StaticFiles(directory="static/docs"), name="docs")
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)

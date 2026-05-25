@@ -4,7 +4,158 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Доктор Хауз | Семейный психолог</title>
-    <link rel="stylesheet" href="/style.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            line-height: 1.6;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 10px;
+        }
+        .app-container {
+            width: 100%;
+            max-width: 600px;
+            height: 95vh;
+            background: #16213e;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        header {
+            text-align: center;
+            padding: 25px 20px 15px;
+            background: #0f3460;
+        }
+        h1 {
+            font-size: 2em;
+            background: linear-gradient(90deg, #00d4aa, #4a8cff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .subtitle { color: #aaa; font-size: 1em; }
+        .role-selector {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 10px;
+            background: #0f3460;
+            flex-wrap: wrap;
+        }
+        .role-selector span { color: #ccc; }
+        .role-buttons button {
+            padding: 8px 15px;
+            border-radius: 20px;
+            border: 1px solid #e94560;
+            background: transparent;
+            color: #e94560;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .role-buttons button.active {
+            background: #e94560;
+            color: white;
+        }
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+            padding: 10px;
+            background: #0f3460;
+            border-bottom: 1px solid #1a1a2e;
+        }
+        .action-btn, .forum-link {
+            padding: 8px 15px;
+            border-radius: 20px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            background: #1a1a2e;
+            color: #ccc;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .chat-window {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .message {
+            max-width: 80%;
+            padding: 12px 18px;
+            border-radius: 18px;
+            line-height: 1.4;
+            word-wrap: break-word;
+        }
+        .user-message {
+            align-self: flex-end;
+            background: #e94560;
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+        .bot-message {
+            align-self: flex-start;
+            background: #0f3460;
+            color: #eee;
+            border-bottom-left-radius: 4px;
+        }
+        .input-area {
+            display: flex;
+            padding: 15px;
+            background: #1a1a2e;
+            border-top: 1px solid #0f3460;
+        }
+        .input-area input {
+            flex: 1;
+            padding: 12px 15px;
+            border-radius: 25px;
+            border: none;
+            background: #0f3460;
+            color: white;
+            font-size: 16px;
+            outline: none;
+        }
+        .input-area button {
+            margin-left: 10px;
+            padding: 12px 20px;
+            border-radius: 25px;
+            border: none;
+            background: #e94560;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .voice-btn {
+            background: #0f3460;
+            border: none;
+            color: #ccc;
+            font-size: 1.2em;
+            padding: 0 10px;
+            cursor: pointer;
+        }
+        .status { text-align: center; font-size: 0.8em; color: #888; padding: 5px; }
+        .container {
+            display: none; /* скрываем блок с тестами на главной */
+        }
+        /* Модальное окно */
+        .modal { display: none; position: fixed; z-index: 1; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); }
+        .modal-content { background: #16213e; margin: 10% auto; padding: 20px; border-radius: 12px; width: 300px; text-align: center; }
+        .close { color: #aaa; float: right; font-size: 28px; cursor: pointer; }
+        .mood-rating { font-size: 2em; }
+    </style>
 </head>
 <body>
     <div class="app-container">
@@ -13,41 +164,42 @@
             <p class="subtitle">Семейный психолог онлайн</p>
         </header>
 
-        <!-- Блок выбора роли и кнопки действий -->
+        <!-- ⚖️ Юридические документы -->
+    <footer style="text-align: center; padding: 15px; background: #0f3460; color: #aaa; font-size: 0.8em;">
+        <a href="/docs/privacy_policy.html" target="_blank" style="color: #ccc; margin: 0 10px;">Политика конфиденциальности</a>
+        <a href="/docs/user_agreement.html" target="_blank" style="color: #ccc; margin: 0 10px;">Пользовательское соглашение</a>
+        <a href="/docs/consent_form.html" target="_blank" style="color: #ccc; margin: 0 10px;">Согласие на обработку данных</a>
+    </footer>
+
         <div class="role-selector">
             <span>Ваша роль:</span>
             <div class="role-buttons">
-                <button data-role="муж">👨 Муж</button>
-                <button data-role="жена">👩 Жена</button>
-                <button data-role="пара">💑 Пара</button>
-                <button data-role="ребёнок">🧒 Ребёнок</button>
+                <button data-role="Муж" class="active">👨 Муж</button>
+                <button data-role="Жена">👩 Жена</button>
+                <button data-role="Пара">💑 Пара</button>
             </div>
         </div>
 
         <div class="action-buttons">
-            <button id="moodBtn" class="action-btn">😊 Дневник настроения</button>
+            <button id="moodBtn" class="action-btn">😊 Дневник</button>
             <a href="/forum.html" class="forum-link">📖 Форум</a>
-            <button id="adviceBtn" class="action-btn">💡 Совет дня</button>
-            <button id="clearHistoryBtn" class="action-btn clear-btn">🗑️ Очистить историю</button>
+            <button id="adviceBtn" class="action-btn">💡 Совет</button>
+            <button id="clearHistoryBtn" class="action-btn clear-btn">🗑️ Очистить</button>
         </div>
 
-        <!-- Окно чата -->
         <div class="chat-window" id="chatWindow">
-            <div class="message bot-message">
-                Здравствуйте! Я Доктор Хауз, семейный психолог. Выберите роль и задайте вопрос. Как я могу помочь?
-            </div>
+            <!-- Сообщения будут добавляться динамически -->
         </div>
 
-        <!-- Панель ввода -->
         <div class="input-area">
             <button id="voiceBtn" class="voice-btn" title="Голосовой ввод">🎤</button>
             <input type="text" id="messageInput" placeholder="Напишите ваш вопрос..." autocomplete="off">
-            <button id="sendBtn">Отправить</button>
+            <button id="sendBtn">➤</button>
         </div>
         <div class="status" id="status"></div>
     </div>
 
-    <!-- Модальное окно для дневника настроения -->
+    <!-- Модальное окно -->
     <div id="moodModal" class="modal">
        <div class="modal-content">
            <span class="close">&times;</span>
@@ -59,8 +211,8 @@
                <span data-mood="4">🙂</span>
                <span data-mood="5">😊</span>
            </div>
-           <div id="selectedMoodText" style="margin: 5px 0; font-size: 0.9rem; color: #2c3e66;">(оценка не выбрана)</div>
-           <textarea id="moodNote" placeholder="Добавьте заметку (необязательно)"></textarea>
+           <div id="selectedMoodText">(оценка не выбрана)</div>
+           <textarea id="moodNote" placeholder="Заметка"></textarea>
            <button id="saveMoodBtn">Сохранить</button>
        </div>
     </div>

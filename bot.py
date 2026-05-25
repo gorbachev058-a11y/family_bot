@@ -5,7 +5,8 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, \
+    InlineKeyboardButton
 
 from config import (
     BOT_TOKEN, KNOWLEDGE_BASE_PATH,
@@ -22,6 +23,8 @@ from states import (
     CompatibilityTest, ParentingStyleTest, SelfAcceptanceTest
 )
 from token_usage import init_db
+from auth_db import init_db
+import sqlite3
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -99,17 +102,43 @@ async def send_long_message(message: types.Message, text: str):
 
 
 # Команда /start
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
-    await state.clear()
-    await message.answer(
-        "👋 Здравствуйте! Я — **Доктор Хауз**, ваш семейный психолог.\n"
+    init_db()
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
+    telegram_id = message.from_user.id
+    c.execute("SELECT id FROM users WHERE telegram_id=?", (telegram_id,))
+    if not c.fetchone():
+        # Создаём пользователя без email
+        c.execute("INSERT INTO users (telegram_id, username) VALUES (?, ?)",
+                  (telegram_id, message.from_user.full_name or ""))
+        conn.commit()
+    conn.close()
+    welcome_text = (
+        "👋 Здравствуйте! Я — **Доктор Хауз**, ваш семейный психолог.\n\n"
+        "Перед началом работы ознакомьтесь с важными документами:\n"
+        "📄 <a href='http://127.0.0.1:8000/docs/privacy_policy.html'>Политика конфиденциальности</a>\n"
+        "📄 <a href='http://127.0.0.1:8000/docs/user_agreement.html'>Пользовательское соглашение</a>\n"
+        "📄 <a href='http://127.0.0.1:8000/docs/consent_form.html'>Согласие на обработку данных</a>\n\n"
+        "📄 <a href='http://127.0.0.1:8000/docs/public_offer.html'>Публичная оферта</a>\n"
+        "Нажимая кнопку ниже, вы подтверждаете, что принимаете условия."
+    )
+    markup = InlineKeyboardMarkup()
+    btn_accept = InlineKeyboardButton("✅ Принимаю условия", callback_data="accept_terms")
+    markup.add(btn_accept)
+    await message.answer(welcome_text, parse_mode="HTML", reply_markup=markup)
+
+    # Состояние выбора роли установим после принятия условий
+@dp.callback_query_handler(lambda c: c.data == 'accept_terms')
+async def accept_terms(call: types.CallbackQuery, state: FSMContext):
+    await call.message.edit_reply_markup()  # убираем кнопку
+    await call.message.answer(
         "Чтобы я мог давать более точные советы, выберите вашу роль:",
         reply_markup=role_keyboard
     )
     await state.set_state(UserRole.choosing_role)
-
-
 # Команда /help
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
@@ -336,6 +365,7 @@ async def main():
     # Запускаем поллинг
     await dp.start_polling(bot)
 
+app.mount("/docs", StaticFiles(directory="static/docs"), name="docs")
 
 if __name__ == "__main__":
     asyncio.run(main())
