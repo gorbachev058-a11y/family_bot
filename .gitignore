@@ -5,8 +5,8 @@ __pycache__/
 *.pyc
 
 # Файлы с секретами (токены, ключи)
-config_local.py
-config.py
+#config_local.py
+#config.py
 *.env
 
 # Базы данных и временные файлы
