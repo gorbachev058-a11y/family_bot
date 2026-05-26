@@ -5,11 +5,18 @@ import re
 from collections import defaultdict
 from typing import Optional, List, Dict
 from config import ROLE_AVATARS
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from auth_db import init_db, hash_password
+from auth_db import init_db, hash_password, activate_premium
+from datetime import datetime, timedelta
+from yookassa import Configuration, Payment
+
+YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "test")
+YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY", "test")
+Configuration.account_id = YOOKASSA_SHOP_ID
+Configuration.secret_key = YOOKASSA_SECRET_KEY
 
 # Старые импорты
 from rag import generate_answer, is_refusal
@@ -21,15 +28,15 @@ from advice import get_daily_advice
 from forum_db import (
     init_forum_db,
     create_topic,
-    get_topics_paginated,          # вместо get_topics
+    get_topics_paginated,
     get_topic,
     add_comment,
-    get_comments_with_likes,       # вместо get_comments
+    get_comments_with_likes,
     get_comment_by_id,
     mark_expert_pick,
     is_already_picked,
-    update_topic,                  # редактирование
-    delete_topic,                  # удаление
+    update_topic,
+    delete_topic,
     update_comment,
     delete_comment,
     toggle_like,
@@ -37,9 +44,6 @@ from forum_db import (
     is_user_expert,
     get_user_by_id
 )
-
-# Аутентификация
-from auth import register_user, login_user
 
 # Обновление базы знаний
 from kb_updater import add_chunk_to_kb
@@ -69,8 +73,6 @@ knowledge_base = KnowledgeBase(KB_PATH)
 conversation_history: Dict[str, List[Dict[str, str]]] = defaultdict(list)
 user_names: Dict[str, str] = {}
 MAX_HISTORY_LENGTH = 20
-
-# Для проактивной подсказки
 proactive_shown: Dict[str, bool] = defaultdict(bool)
 
 # ========================
@@ -98,17 +100,15 @@ def save_dialogue(user_id: str, role: str, question: str, answer: str):
     c = conn.cursor()
     c.execute("INSERT INTO dialogues (user_id, role, question, answer) VALUES (?, ?, ?, ?)",
               (user_id, role, question, answer))
-    trial_end = (datetime.now() + timedelta(days=30)).isoformat()
-    c.execute("UPDATE users SET premium_until=? WHERE id=?", (trial_end, user_id))
     conn.commit()
     conn.close()
 
 init_dialogues_db()
-init_forum_db()  # таблицы форума
+init_forum_db()
 
-#==============================
-#Эндпоинты регистрации и входа
-#==============================
+# ========================
+# Pydantic модели
+# ========================
 class RegisterRequest(BaseModel):
     email: str
     password: str
@@ -118,41 +118,6 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
-@app.post("/auth/register")
-async def register(request: RegisterRequest):
-    init_db()
-    conn = sqlite3.connect("data/users.db")
-    c = conn.cursor()
-    # Проверка на существование
-    c.execute("SELECT id FROM users WHERE email=?", (request.email,))
-    if c.fetchone():
-        conn.close()
-        raise HTTPException(400, "Email уже используется")
-    pwd = hash_password(request.password)
-    c.execute("INSERT INTO users (email, password_hash, username) VALUES (?,?,?)",
-              (request.email, pwd, request.username))
-    conn.commit()
-    user_id = c.lastrowid
-    conn.close()
-    return {"user_id": user_id, "email": request.email}
-
-@app.post("/auth/login")
-async def login(request: LoginRequest):
-    init_db()
-    conn = sqlite3.connect("data/users.db")
-    c = conn.cursor()
-    pwd = hash_password(request.password)
-    c.execute("SELECT id, email, username, telegram_id FROM users WHERE email=? AND password_hash=?",
-              (request.email, pwd))
-    row = c.fetchone()
-    conn.close()
-    if not row:
-        raise HTTPException(401, "Неверные учетные данные")
-    return {"user_id": row[0], "email": row[1], "username": row[2], "telegram_id": row[3]}
-
-# ========================
-# Pydantic модели
-# ========================
 class ChatRequest(BaseModel):
     message: str
     role: str
@@ -177,6 +142,111 @@ class ClearHistoryResponse(BaseModel):
     message: str
 
 # ========================
+# Эндпоинты регистрации и входа
+# ========================
+@app.post("/auth/register")
+async def register(request: RegisterRequest):
+    init_db()
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
+    c.execute("SELECT id FROM users WHERE email=?", (request.email,))
+    if c.fetchone():
+        conn.close()
+        raise HTTPException(400, "Email уже используется")
+    pwd = hash_password(request.password)
+    c.execute("INSERT INTO users (email, password_hash, username) VALUES (?,?,?)",
+              (request.email, pwd, request.username))
+    user_id = c.lastrowid
+    # Активация триального Premium на 30 дней
+    trial_end = (datetime.now() + timedelta(days=30)).isoformat()
+    c.execute("UPDATE users SET premium_until=? WHERE id=?", (trial_end, user_id))
+    conn.commit()
+    conn.close()
+    return {"user_id": user_id, "email": request.email}
+
+@app.post("/auth/login")
+async def login(request: LoginRequest):
+    init_db()
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
+    pwd = hash_password(request.password)
+    c.execute("SELECT id, email, username, telegram_id FROM users WHERE email=? AND password_hash=?",
+              (request.email, pwd))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(401, "Неверные учетные данные")
+    return {"user_id": row[0], "email": row[1], "username": row[2], "telegram_id": row[3]}
+
+# ========================
+# Создание премиум-платежа
+# ========================
+
+@app.post("/create_premium_payment")
+async def create_premium_payment(user_id: int):
+    # Проверим, что пользователь существует
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
+    c.execute("SELECT id, email FROM users WHERE id=?", (user_id,))
+    user = c.fetchone()
+    if not user:
+        conn.close()
+        raise HTTPException(404, "Пользователь не найден")
+
+    payment = Payment.create({
+        "amount": {"value": "490.00", "currency": "RUB"},
+        "confirmation": {"type": "redirect", "return_url": "https://doctorhauz.ru/success"},
+        "capture": True,
+        "description": "Premium подписка на 1 месяц",
+        "metadata": {"user_id": user_id}
+    })
+
+    # Сохраним платёж в БД
+    c.execute("INSERT INTO payments (user_id, amount, yookassa_id, status) VALUES (?, ?, ?, ?)",
+              (user_id, 490.00, payment.id, "pending"))
+    conn.commit()
+    conn.close()
+    return {"payment_id": payment.id, "confirmation_url": payment.confirmation.confirmation_url}
+
+@app.post("/yookassa_webhook")
+async def yookassa_webhook(request: Request):
+    data = await request.json()
+    if data.get("event") == "payment.succeeded":
+        payment_id = data["object"]["id"]
+        metadata = data["object"].get("metadata", {})
+        user_id = metadata.get("user_id")
+        if user_id:
+            activate_premium(int(user_id), days=30)
+            # Обновим статус в таблице payments
+            conn = sqlite3.connect("data/users.db")
+            c = conn.cursor()
+            c.execute("UPDATE payments SET status='succeeded' WHERE yookassa_id=?", (payment_id,))
+            conn.commit()
+            conn.close()
+    return {"status": "ok"}
+
+# Донат произвольная сумма
+class DonateRequest(BaseModel):
+    amount: float  # минимум 50 руб
+    user_id: int = None  # необязательно
+
+@app.post("/create_donation")
+async def create_donation(request: DonateRequest):
+    amount = max(50.0, request.amount)
+    payment = Payment.create({
+        "amount": {"value": str(amount), "currency": "RUB"},
+        "confirmation": {"type": "redirect", "return_url": "https://doctorhauz.ru/thanks"},
+        "capture": True,
+        "description": "Добровольное пожертвование на развитие проекта",
+        "metadata": {"user_id": request.user_id or 0}
+    })
+    return {"confirmation_url": payment.confirmation.confirmation_url}
+@app.get("/donate")
+async def donate_page():
+    from fastapi.responses import FileResponse
+    return FileResponse("static/donate.html")
+
+# ========================
 # Функции для работы с историей
 # ========================
 def get_conversation_context(user_id: str, max_messages: int = 4) -> str:
@@ -188,7 +258,6 @@ def get_conversation_context(user_id: str, max_messages: int = 4) -> str:
     for msg in recent:
         if msg["role"] == "user":
             lines.append(f"- Пользователь: {msg['content']}")
-        # ответы бота не включаем, чтобы не провоцировать повтор
     return "\n".join(lines)
 
 def add_to_history(user_id: str, user_message: str, bot_response: str):
@@ -208,7 +277,6 @@ def clear_history(user_id: str):
 # Функции для работы с именем
 # ========================
 def extract_and_store_name(user_id: str, message: str) -> str:
-    # Слова-стоп, которые не являются именами (бот мог их сказать)
     stop_words = {"внимание", "привет", "здравствуй"}
     patterns = [
         r"меня зовут\s+([А-Яа-яёЁ\-]+)",
@@ -228,7 +296,7 @@ def extract_and_store_name(user_id: str, message: str) -> str:
     return user_names.get(user_id, "")
 
 # ========================
-# Определение "опасных" тем (пропуск YandexGPT)
+# Определение "опасных" тем
 # ========================
 SENSITIVE_KEYWORDS = [
     "сво", "война", "военный", "боец", "птср", "насили", "бьёт", "побои",
@@ -244,13 +312,11 @@ def build_fallback_from_chunks(query: str, chunks: list, role: str, user_name: s
     if not chunks:
         return ("Извините, в моей базе знаний пока нет информации. "
                 "Обратитесь к психологу или по телефону доверия 8-800-2000-122.")
-
     answer_parts = []
     if user_name:
         answer_parts.append(f"{user_name}, я не могу дать полноценный ответ через интернет, но вот что нашёл в базе знаний:\n")
     else:
         answer_parts.append("Я не могу дать развёрнутый ответ через интернет, но вот что нашёл в базе знаний:\n")
-
     for i, chunk in enumerate(chunks[:3], 1):
         clean = chunk
         if clean.startswith('#'):
@@ -258,7 +324,6 @@ def build_fallback_from_chunks(query: str, chunks: list, role: str, user_name: s
             if len(lines) > 1:
                 clean = lines[1]
         answer_parts.append(f"**{i}.** {clean}\n")
-
     if is_sensitive_topic(query):
         answer_parts.append(
             "\n\n⚠️ **Если вы или близкие в сложной ситуации, помощь рядом:**\n"
@@ -271,7 +336,7 @@ def build_fallback_from_chunks(query: str, chunks: list, role: str, user_name: s
     return "\n".join(answer_parts)
 
 # ========================
-# Генерация ответа с именем, контекстом и проактивностью
+# Генерация ответа
 # ========================
 async def run_async_generate(query: str, role: str, user_id: str) -> str:
     try:
@@ -309,9 +374,6 @@ async def run_async_generate(query: str, role: str, user_id: str) -> str:
             logger.warning("YandexGPT отказался, используем fallback")
             answer = build_fallback_from_chunks(query, context_chunks, role, user_name)
 
-        # === Автоматическая вставка "развёрнутых рекомендаций" ОТКЛЮЧЕНА ===
-        # (блок удалён полностью, чтобы не раздражать пользователей)
-
         add_to_history(user_id, query, answer)
         save_dialogue(user_id, role, query, answer)
         return answer
@@ -321,7 +383,7 @@ async def run_async_generate(query: str, role: str, user_id: str) -> str:
         return f"Произошла ошибка: {str(e)}"
 
 # ========================
-# Эндпоинты чата и дневника (старые)
+# Эндпоинты чата и дневника
 # ========================
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
@@ -340,6 +402,7 @@ async def clear_history_endpoint(user_id: str):
     if user_id in user_names:
         del user_names[user_id]
     return ClearHistoryResponse(status="ok", message="История диалога и имя очищены")
+
 @app.post("/mood")
 async def mood_endpoint(request: MoodRequest):
     try:
@@ -367,7 +430,6 @@ async def advice_endpoint():
         logger.exception("Ошибка получения совета")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Приветствие аватара по роли
 @app.get("/greeting/{role}")
 async def get_greeting(role: str):
     avatar = ROLE_AVATARS.get(role, ROLE_AVATARS["Муж"])
@@ -389,33 +451,7 @@ async def get_dialogues(user_id: str, limit: int = 20):
     return [{"question": row["question"], "answer": row["answer"], "timestamp": row["timestamp"]} for row in rows]
 
 # ========================
-# НОВЫЕ ЭНДПОЙНТЫ: АУТЕНТИФИКАЦИЯ
-# ========================
-@app.post("/auth/register")
-async def register(username: str, password: str, display_name: str = None, expert_key: str = None):
-    EXPERT_REG_KEY = os.getenv("EXPERT_REG_KEY", "supersecret")
-    is_expert = (expert_key == EXPERT_REG_KEY)
-    user = register_user(username, password, display_name, is_expert)
-    if not user:
-        raise HTTPException(400, "Пользователь уже существует")
-    return user
-
-@app.post("/auth/login")
-async def login(username: str, password: str):
-    user = login_user(username, password)
-    if not user:
-        raise HTTPException(401, "Неверные учетные данные")
-    return user
-
-@app.get("/auth/me")
-async def get_current_user(user_id: int):
-    user = get_user_by_id(user_id)
-    if not user:
-        raise HTTPException(404, "Пользователь не найден")
-    return {"id": user["id"], "username": user["username"], "display_name": user["display_name"], "is_expert": user["is_expert"]}
-
-# ========================
-# НОВЫЕ ЭНДПОЙНТЫ: ФОРУМ (с пагинацией, лайками, редактированием)
+# Эндпоинты форума (оставлены как были, используют старую auth)
 # ========================
 @app.get("/forum/topics")
 async def forum_topics(page: int = 1, per_page: int = 10):
@@ -500,8 +536,9 @@ async def add_comment_to_kb(comment_id: int, user_id: int, tags: List[str]):
 # ========================
 # Статика
 # ========================
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
 app.mount("/docs", StaticFiles(directory="static/docs"), name="docs")
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)

@@ -269,6 +269,14 @@ if (adviceBtn) {
     });
 }
 
+// обработчик доната
+const donateBtn = document.getElementById('donateBtn');
+if (donateBtn) {
+    donateBtn.addEventListener('click', () => {
+        window.open('https://doctorhauz.ru/donate', '_blank');
+    });
+}
+
 // --- Очистка истории ---
 const clearHistoryBtn = document.getElementById('clearHistoryBtn');
 if (clearHistoryBtn) {

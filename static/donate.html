@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<head><title>Поддержать проект</title></head>
+<body style="text-align:center; padding:50px;">
+    <h1>Спасибо за поддержку! ☕</h1>
+    <p>Выберите сумму для доната:</p>
+    <button onclick="window.location.href='https://doctorhauz.ru/donate?amount=100'">100 ₽</button>
+    <button onclick="window.location.href='https://doctorhauz.ru/donate?amount=500'">500 ₽</button>
+    <p>Или введите свою сумму:</p>
+    <input type="number" id="customAmount" placeholder="Сумма">
+    <button onclick="window.location.href='https://doctorhauz.ru/donate?amount='+document.getElementById('customAmount').value">Перейти к оплате</button>
+</body>
+</html>
