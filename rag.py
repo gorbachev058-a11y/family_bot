@@ -4,6 +4,7 @@ from config import YC_USE_GPT, TAVILY_USE_SEARCH
 from yandex_gpt import ask_yandex_gpt, get_system_prompt_for_role
 from tavily_search import TavilySearcher
 from cachetools import TTLCache
+from state_detector import detect_user_state
 
 # Кеш для ответов: максимум 200 элементов, TTL 3600 секунд (1 час)
 cache = TTLCache(maxsize=200, ttl=3600)
@@ -11,6 +12,9 @@ cache = TTLCache(maxsize=200, ttl=3600)
 logger = logging.getLogger(__name__)
 
 _searcher = None
+
+# Хранилище истории диалогов для детектора зацикливания
+_conversation_history = {}
 
 
 def get_searcher():
@@ -74,6 +78,24 @@ def build_fallback_answer(query: str, context_chunks: list, role: str) -> str:
         )
 
 
+def get_conversation_history_for_detector(user_id: str = "default", max_messages: int = 4) -> list:
+    """
+    Возвращает последние сообщения диалога для детектора состояния.
+    В будущем это будет браться из общего хранилища истории.
+    """
+    return _conversation_history.get(user_id, [])[-max_messages:]
+
+
+def add_to_detector_history(user_id: str, role: str, content: str):
+    """Добавляет сообщение в историю для детектора."""
+    if user_id not in _conversation_history:
+        _conversation_history[user_id] = []
+    _conversation_history[user_id].append({"role": role, "content": content})
+    # Ограничиваем длину истории
+    if len(_conversation_history[user_id]) > 20:
+        _conversation_history[user_id] = _conversation_history[user_id][-20:]
+
+
 async def generate_answer(query: str, context_chunks: list, role: str, user_id: int = None) -> str:
     """Генерирует ответ с использованием YandexGPT и поиска Tavily, с fallback при отказе."""
     # Проверка кеша
@@ -81,6 +103,79 @@ async def generate_answer(query: str, context_chunks: list, role: str, user_id: 
     if cache_key in cache:
         logger.info(f"✅ Ответ взят из кеша для запроса: {query[:50]}...")
         return cache[cache_key]
+
+    # --- Детектор состояния и антизацикливание ---
+    user_id_str = str(user_id) if user_id else "default"
+
+    # Получаем историю диалога для этого пользователя
+    history = get_conversation_history_for_detector(user_id_str)
+
+    # Определяем состояние пользователя
+    state = detect_user_state(query, history)
+    logger.info(f"Состояние пользователя: {state}")
+
+    # Формируем инструкцию для модели в зависимости от состояния
+    state_instruction = ""
+    if state == "venting":
+        state_instruction = (
+            "[ВАЖНО] Пользователь сейчас выплёскивает эмоции. "
+            "Не задавай вопросов, не перебивай, не советуй. Просто выслушай и покажи, что ты рядом. "
+            "Используй фразы: «Я тебя слышу», «Это действительно тяжело», «Расскажи, что чувствуешь»."
+        )
+    elif state == "angry":
+        state_instruction = (
+            "[ВАЖНО] Пользователь раздражён и зол. "
+            "НЕ переспрашивай, НЕ задавай уточняющих вопросов. Извинись, если это уместно, и сразу переходи к сути. "
+            "Будь краток и полезен. Если не знаешь, что сказать, так и скажи: «Давай по делу, я слушаю»."
+        )
+    elif state == "confused":
+        state_instruction = (
+            "[ВАЖНО] Пользователь растерян и не знает, что делать. "
+            "Предложи 2-3 варианта действий, но не дави. Спроси, какой из вариантов ближе."
+        )
+    elif state == "new_dialog":
+        state_instruction = (
+            "[ВАЖНО] Это начало диалога. Поприветствуй пользователя и спроси, что привело его сюда. "
+            "Не используй имя, если его ещё не назвали."
+        )
+    # Для "asking" инструкция не добавляется
+
+    # Проверка на зацикливание по истории
+    if len(history) >= 2:
+        last_bot_msg = None
+        second_last_bot_msg = None
+        # Ищем последние два ответа бота в истории
+        for msg in reversed(history):
+            if msg["role"] == "assistant":
+                if last_bot_msg is None:
+                    last_bot_msg = msg["content"]
+                elif second_last_bot_msg is None:
+                    second_last_bot_msg = msg["content"]
+                    break
+
+        if last_bot_msg and second_last_bot_msg:
+            # Проверка на повторение вопроса про имя
+            if "Как мне к вам обращаться?" in last_bot_msg and "Как мне к вам обращаться?" in second_last_bot_msg:
+                state_instruction += (
+                    "\n[ПРЕДУПРЕЖДЕНИЕ] Ты уже дважды спросил имя. НЕ спрашивай его снова. Просто продолжай диалог."
+                )
+            # Проверка на повторение уточняющих вопросов
+            if any(phrase in last_bot_msg for phrase in ["расскажи", "опиши", "как давно", "сколько времени"]) and \
+                    any(phrase in second_last_bot_msg for phrase in
+                        ["расскажи", "опиши", "как давно", "сколько времени"]):
+                state_instruction += (
+                    "\n[ПРЕДУПРЕЖДЕНИЕ] Ты задаёшь похожие вопросы второй раз. НЕ переспрашивай. Сразу дай ответ по существу."
+                )
+
+    # Добавляем инструкцию в запрос
+    if state_instruction:
+        enhanced_query = f"{state_instruction}\n\nЗапрос пользователя: {query}"
+    else:
+        enhanced_query = query
+
+    # Добавляем сообщение пользователя в историю детектора
+    add_to_detector_history(user_id_str, "user", query)
+    # --- Конец детектора ---
 
     if not YC_USE_GPT:
         # Режим без ИИ (только база знаний)
@@ -118,7 +213,7 @@ async def generate_answer(query: str, context_chunks: list, role: str, user_id: 
 
         logger.info("Отправка запроса в YandexGPT...")
         answer = await ask_yandex_gpt(
-            user_message=query,
+            user_message=enhanced_query,  # Используем улучшенный запрос с инструкцией
             system_prompt=system_prompt,
             temperature=0.7,
             max_tokens=2500,
@@ -126,6 +221,9 @@ async def generate_answer(query: str, context_chunks: list, role: str, user_id: 
             user_id=user_id,
             role=role
         )
+
+        # Добавляем ответ бота в историю детектора
+        add_to_detector_history(user_id_str, "assistant", answer)
 
         # ПРОВЕРКА НА ОТКАЗ
         if is_refusal(answer):
