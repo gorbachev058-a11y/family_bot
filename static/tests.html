@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Психологические тесты — Доктор Хауз</title>
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        body { background: #1a1a2e; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; background: #16213e; border-radius: 20px; padding: 30px; box-shadow: 0 10px 30px rgba(0,0,0,0.6); }
+        h1 { text-align: center; background: linear-gradient(90deg, #00d4aa, #4a8cff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .test-list { display: flex; flex-direction: column; gap: 15px; margin: 20px 0; }
+        .test-item { background: #0f3460; padding: 15px 20px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; transition: background 0.2s; }
+        .test-item:hover { background: #1a4a7a; }
+        .test-item .name { font-size: 1.1em; }
+        .test-item .count { color: #aaa; font-size: 0.9em; }
+        .question-block { margin: 20px 0; }
+        .question { background: #0f3460; padding: 15px; border-radius: 10px; margin-bottom: 10px; }
+        .question p { margin: 0 0 10px; }
+        .options { display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; }
+        .options label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+        .btn-submit { background: #e94560; color: white; border: none; padding: 12px 30px; border-radius: 25px; font-size: 1.1em; cursor: pointer; margin-top: 20px; }
+        .btn-back { background: #0f3460; color: #ccc; border: none; padding: 10px 20px; border-radius: 20px; text-decoration: none; display: inline-block; margin-top: 10px; }
+        .result-box { background: #0f3460; padding: 20px; border-radius: 12px; margin-top: 20px; white-space: pre-wrap; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📋 Психологические тесты</h1>
+        <div id="testList" class="test-list">
+            <!-- Список тестов загрузится сюда -->
+        </div>
+        <div id="testContainer" class="hidden">
+            <h2 id="testTitle"></h2>
+            <div id="questionsContainer"></div>
+            <button id="submitTestBtn" class="btn-submit">Получить результат</button>
+            <div id="resultContainer" class="result-box hidden"></div>
+            <button id="backToListBtn" class="btn-back">← Назад к списку</button>
+        </div>
+    </div>
+
+    <script>
+        let currentTestId = null;
+        let userAnswers = [];
+        const userId = localStorage.getItem('userId') || 'guest_' + Date.now();
+
+        // Загружаем список тестов
+        async function loadTests() {
+            try {
+                const res = await fetch('/tests/list');
+                const data = await res.json();
+                const list = document.getElementById('testList');
+                list.innerHTML = '';
+                data.tests.forEach(test => {
+                    const div = document.createElement('div');
+                    div.className = 'test-item';
+                    div.innerHTML = `
+                        <span class="name">${test.name}</span>
+                        <span class="count">${test.questions_count} вопросов</span>
+                    `;
+                    div.addEventListener('click', () => startTest(test.id));
+                    list.appendChild(div);
+                });
+            } catch (e) {
+                document.getElementById('testList').innerHTML = '<p>Ошибка загрузки тестов.</p>';
+                console.error(e);
+            }
+        }
+
+        // Начать тест
+        async function startTest(testId) {
+            try {
+                const res = await fetch(`/tests/${testId}/questions`);
+                const data = await res.json();
+                currentTestId = testId;
+                document.getElementById('testList').classList.add('hidden');
+                document.getElementById('testContainer').classList.remove('hidden');
+                document.getElementById('testTitle').textContent = data.questions.length > 0 ? 'Тест' : 'Вопросы не найдены';
+                const container = document.getElementById('questionsContainer');
+                container.innerHTML = '';
+                userAnswers = new Array(data.questions.length).fill(null);
+                data.questions.forEach((q, index) => {
+                    const div = document.createElement('div');
+                    div.className = 'question';
+                    div.innerHTML = `
+                        <p><strong>${index + 1}.</strong> ${q}</p>
+                        <div class="options" data-index="${index}">
+                            ${[1,2,3,4,5].map(val => `
+                                <label>
+                                    <input type="radio" name="q${index}" value="${val}">
+                                    ${val}
+                                </label>
+                            `).join('')}
+                        </div>
+                    `;
+                    container.appendChild(div);
+                    // Сохраняем выбранные ответы
+                    const radios = div.querySelectorAll('input[type="radio"]');
+                    radios.forEach(radio => {
+                        radio.addEventListener('change', (e) => {
+                            userAnswers[index] = parseInt(e.target.value);
+                        });
+                    });
+                });
+                document.getElementById('resultContainer').classList.add('hidden');
+                document.getElementById('submitTestBtn').style.display = 'block';
+            } catch (e) {
+                alert('Ошибка загрузки вопросов.');
+                console.error(e);
+            }
+        }
+
+        // Отправить ответы
+        document.getElementById('submitTestBtn').addEventListener('click', async () => {
+            // Проверим, все ли вопросы отвечены
+            const allAnswered = userAnswers.every(a => a !== null);
+            if (!allAnswered) {
+                alert('Ответьте на все вопросы, прежде чем получить результат.');
+                return;
+            }
+            try {
+                const res = await fetch('/tests/submit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        test_id: currentTestId,
+                        answers: userAnswers,
+                        user_id: userId
+                    })
+                });
+                const data = await res.json();
+                document.getElementById('resultContainer').textContent = data.result;
+                document.getElementById('resultContainer').classList.remove('hidden');
+                document.getElementById('submitTestBtn').style.display = 'none';
+            } catch (e) {
+                alert('Ошибка отправки теста.');
+                console.error(e);
+            }
+        });
+
+        // Вернуться к списку
+        document.getElementById('backToListBtn').addEventListener('click', () => {
+            document.getElementById('testContainer').classList.add('hidden');
+            document.getElementById('testList').classList.remove('hidden');
+            loadTests(); // обновим список
+        });
+
+        // Инициализация
+        loadTests();
+    </script>
+</body>
+</html>

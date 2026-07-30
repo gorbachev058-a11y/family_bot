@@ -5,26 +5,23 @@ import re
 from collections import defaultdict
 from typing import Optional, List, Dict
 from config import ROLE_AVATARS
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
-from auth_db import init_db, hash_password, activate_premium
 from datetime import datetime, timedelta
+
+# ЮKassa
 from yookassa import Configuration, Payment
 
-YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "test")
-YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY", "test")
-Configuration.account_id = YOOKASSA_SHOP_ID
-Configuration.secret_key = YOOKASSA_SECRET_KEY
-
-# Старые импорты
+# Ваши модули
+from auth_db import init_db, hash_password, activate_premium
+from auth_telegram import verify_telegram_auth, create_jwt, decode_jwt
 from rag import generate_answer, is_refusal
 from knowledge_base import KnowledgeBase
 from mood import save_mood, get_mood_history
 from advice import get_daily_advice
-
-# Новые импорты для форума (расширенные функции)
 from forum_db import (
     init_forum_db,
     create_topic,
@@ -44,15 +41,38 @@ from forum_db import (
     is_user_expert,
     get_user_by_id
 )
-
-# Обновление базы знаний
 from kb_updater import add_chunk_to_kb
 
+# Импортируем функции для тестов (если они есть в test_handlers)
+try:
+    from test_handlers import (
+        test_registry,
+        calculate_anxiety,
+        calculate_compatibility,
+        calculate_parenting_style,
+        calculate_self_acceptance,
+        calculate_self_esteem,
+        calculate_self_esteem as calculate_self_esteem_alias  # если имя другое
+    )
+    TEST_HANDLERS_AVAILABLE = True
+except ImportError:
+    TEST_HANDLERS_AVAILABLE = False
+    logging.warning("test_handlers.py не найден, тесты будут работать в режиме заглушки")
+
+# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Конфигурация ЮKassa из переменных окружения
+YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "test")
+YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY", "test")
+Configuration.account_id = YOOKASSA_SHOP_ID
+Configuration.secret_key = YOOKASSA_SECRET_KEY
+
+# Инициализация приложения
 app = FastAPI(title="Доктор Хауз Web API")
 
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -107,6 +127,18 @@ init_dialogues_db()
 init_forum_db()
 
 # ========================
+# Авторизация через Telegram (Bearer JWT)
+# ========================
+security = HTTPBearer()
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    payload = decode_jwt(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    return payload
+
+# ========================
 # Pydantic модели
 # ========================
 class RegisterRequest(BaseModel):
@@ -140,6 +172,15 @@ class AdviceResponse(BaseModel):
 class ClearHistoryResponse(BaseModel):
     status: str
     message: str
+
+class DonateRequest(BaseModel):
+    amount: float
+    user_id: Optional[int] = None
+
+class TestSubmitRequest(BaseModel):
+    test_id: str
+    answers: List[int]
+    user_id: str
 
 # ========================
 # Эндпоинты регистрации и входа
@@ -178,30 +219,54 @@ async def login(request: LoginRequest):
         raise HTTPException(401, "Неверные учетные данные")
     return {"user_id": row[0], "email": row[1], "username": row[2], "telegram_id": row[3]}
 
-# ========================
-# Создание премиум-платежа
-# ========================
-
-@app.post("/create_premium_payment")
-async def create_premium_payment(user_id: int):
-    # Проверим, что пользователь существует
+@app.post("/auth/telegram")
+async def auth_telegram(data: dict):
+    verified = verify_telegram_auth(data.copy())
+    if not verified:
+        raise HTTPException(401, "Telegram auth failed")
+    telegram_id = verified['id']
     conn = sqlite3.connect("data/users.db")
     c = conn.cursor()
-    c.execute("SELECT id, email FROM users WHERE id=?", (user_id,))
-    user = c.fetchone()
-    if not user:
+    c.execute("SELECT id FROM users WHERE telegram_id=?", (telegram_id,))
+    row = c.fetchone()
+    if not row:
+        username = verified.get('first_name', '') + ' ' + verified.get('last_name', '')
+        c.execute("INSERT INTO users (username, telegram_id) VALUES (?, ?)", (username.strip(), telegram_id))
+        user_id = c.lastrowid
+    else:
+        user_id = row[0]
+    conn.commit()
+    conn.close()
+    token = create_jwt(user_id, telegram_id)
+    return {"token": token, "user_id": user_id, "telegram_id": telegram_id}
+
+# ========================
+# Платежи (Premium и Донаты)
+# ========================
+@app.post("/create_premium_payment")
+async def create_premium_payment(request: Request):
+    data = await request.json()
+    user_id = data.get("user_id")
+    if not user_id:
+        raise HTTPException(400, "user_id обязателен")
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
+    c.execute("SELECT id FROM users WHERE id=?", (user_id,))
+    if not c.fetchone():
         conn.close()
         raise HTTPException(404, "Пользователь не найден")
+    conn.close()
 
     payment = Payment.create({
         "amount": {"value": "490.00", "currency": "RUB"},
-        "confirmation": {"type": "redirect", "return_url": "https://doctorhauz.ru/success"},
+        "confirmation": {"type": "redirect", "return_url": "https://doctorhauz.ru/success.html"},
         "capture": True,
         "description": "Premium подписка на 1 месяц",
         "metadata": {"user_id": user_id}
     })
 
-    # Сохраним платёж в БД
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
     c.execute("INSERT INTO payments (user_id, amount, yookassa_id, status) VALUES (?, ?, ?, ?)",
               (user_id, 490.00, payment.id, "pending"))
     conn.commit()
@@ -217,7 +282,6 @@ async def yookassa_webhook(request: Request):
         user_id = metadata.get("user_id")
         if user_id:
             activate_premium(int(user_id), days=30)
-            # Обновим статус в таблице payments
             conn = sqlite3.connect("data/users.db")
             c = conn.cursor()
             c.execute("UPDATE payments SET status='succeeded' WHERE yookassa_id=?", (payment_id,))
@@ -225,29 +289,34 @@ async def yookassa_webhook(request: Request):
             conn.close()
     return {"status": "ok"}
 
-# Донат произвольная сумма
-class DonateRequest(BaseModel):
-    amount: float  # минимум 50 руб
-    user_id: int = None  # необязательно
-
 @app.post("/create_donation")
 async def create_donation(request: DonateRequest):
     amount = max(50.0, request.amount)
     payment = Payment.create({
         "amount": {"value": str(amount), "currency": "RUB"},
-        "confirmation": {"type": "redirect", "return_url": "https://doctorhauz.ru/thanks"},
+        "confirmation": {"type": "redirect", "return_url": "https://doctorhauz.ru/thanks.html"},
         "capture": True,
         "description": "Добровольное пожертвование на развитие проекта",
         "metadata": {"user_id": request.user_id or 0}
     })
     return {"confirmation_url": payment.confirmation.confirmation_url}
-@app.get("/donate")
-async def donate_page():
-    from fastapi.responses import FileResponse
-    return FileResponse("static/donate.html")
+
+@app.get("/premium_status")
+async def premium_status(user_id: int):
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
+    c.execute("SELECT premium_until FROM users WHERE id=?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "Пользователь не найден")
+    premium_until = row[0]
+    if premium_until and datetime.fromisoformat(premium_until) > datetime.now():
+        return {"active": True, "until": premium_until}
+    return {"active": False}
 
 # ========================
-# Функции для работы с историей
+# Функции для работы с историей диалогов
 # ========================
 def get_conversation_context(user_id: str, max_messages: int = 4) -> str:
     history = conversation_history.get(user_id, [])
@@ -274,7 +343,7 @@ def clear_history(user_id: str):
     return False
 
 # ========================
-# Функции для работы с именем
+# Функции для извлечения имени пользователя
 # ========================
 def extract_and_store_name(user_id: str, message: str) -> str:
     stop_words = {"внимание", "привет", "здравствуй"}
@@ -309,35 +378,25 @@ def is_sensitive_topic(query: str) -> bool:
     return any(kw in low for kw in SENSITIVE_KEYWORDS)
 
 def build_fallback_from_chunks(query: str, chunks: list, role: str, user_name: str = "") -> str:
-    # Если нет чанков, возвращаем общий эмпатичный ответ
     if not chunks:
         return ("Слушай, в моей базе знаний пока нет точного ответа на этот вопрос. "
                 "Но я рядом. Расскажи, что у тебя на душе? Если чувствуешь, что нужна срочная помощь — звони 112 или 8-800-2000-122.")
-
-    # Для Соратника (Муж) сделаем более живой ответ
     if role == "Муж":
         prefix = "Слушай, у меня нет готового ответа, но вот что я знаю и что может тебе помочь:\n\n"
     else:
         prefix = "Вот информация, которая может быть полезна:\n\n"
-
-    # Собираем чанки с минимальной обработкой (убираем решётки заголовков)
     cleaned_chunks = []
-    for chunk in chunks[:3]:  # берём не больше трёх
+    for chunk in chunks[:3]:
         clean = chunk.strip()
         if clean.startswith('#'):
-            # убираем первую строку с тегами, если она есть
             lines = clean.split('\n', 1)
             clean = lines[1] if len(lines) > 1 else clean
         cleaned_chunks.append(f"• {clean}")
-
     answer = prefix + "\n\n".join(cleaned_chunks)
-
-    # Добавим эмпатическое завершение
     if role == "Муж":
         answer += "\n\nЭто не всё, что можно сказать. Давай продолжим разговор — расскажи, что тебя сильнее всего цепляет из написанного?"
     else:
         answer += "\n\nЕсли нужно прояснить что-то из этого, просто спросите."
-
     return answer
 
 # ========================
@@ -388,17 +447,13 @@ async def run_async_generate(query: str, role: str, user_id: str) -> str:
         return f"Произошла ошибка: {str(e)}"
 
 # ========================
-# Эндпоинты чата и дневника
+# Основные эндпоинты чата и дневника
 # ========================
 @app.post("/chat", response_model=ChatResponse)
-async def chat_endpoint(request: ChatRequest):
-    logger.info(f"Получен запрос: user={request.user_id}, role={request.role}")
-    try:
-        answer = await run_async_generate(request.message, request.role, request.user_id)
-        return ChatResponse(response=answer)
-    except Exception as e:
-        logger.exception("Ошибка в /chat")
-        raise HTTPException(status_code=500, detail=str(e))
+async def chat_endpoint(request: ChatRequest, user_data: dict = Depends(get_current_user)):
+    actual_user_id = str(user_data['user_id'])
+    answer = await run_async_generate(request.message, request.role, actual_user_id)
+    return ChatResponse(response=answer)
 
 @app.post("/clear_history")
 async def clear_history_endpoint(user_id: str):
@@ -456,7 +511,7 @@ async def get_dialogues(user_id: str, limit: int = 20):
     return [{"question": row["question"], "answer": row["answer"], "timestamp": row["timestamp"]} for row in rows]
 
 # ========================
-# Эндпоинты форума (оставлены как были, используют старую auth)
+# Эндпоинты форума
 # ========================
 @app.get("/forum/topics")
 async def forum_topics(page: int = 1, per_page: int = 10):
@@ -537,6 +592,132 @@ async def add_comment_to_kb(comment_id: int, user_id: int, tags: List[str]):
     if not is_already_picked(comment_id):
         mark_expert_pick(comment["topic_id"], comment_id)
     return {"status": "added", "message": "Чанк добавлен в базу знаний и индекс обновлён"}
+
+# ========================
+# НОВЫЕ ЭНДПОИНТЫ ДЛЯ ПСИХОЛОГИЧЕСКИХ ТЕСТОВ
+# ========================
+
+@app.get("/tests/list")
+async def get_tests_list():
+    """Возвращает список доступных тестов"""
+    tests = [
+        {"id": "anxiety", "name": "Краткий опросник тревожности", "questions_count": 5},
+        {"id": "compatibility", "name": "Совместимость пары", "questions_count": 5},
+        {"id": "parenting", "name": "Стиль воспитания", "questions_count": 5},
+        {"id": "self_acceptance", "name": "Самопринятие", "questions_count": 5},
+        {"id": "self_esteem", "name": "Лесенка (самооценка)", "questions_count": 5},
+    ]
+    return {"tests": tests}
+
+@app.get("/tests/{test_id}/questions")
+async def get_test_questions(test_id: str):
+    """Возвращает вопросы для конкретного теста"""
+    questions_map = {
+        "anxiety": [
+            "Я часто испытываю беспокойство без видимой причины.",
+            "Мне трудно заснуть из-за тревожных мыслей.",
+            "Я легко раздражаюсь по пустякам.",
+            "Мне кажется, что окружающие относятся ко мне негативно.",
+            "Я часто чувствую внутреннее напряжение."
+        ],
+        "compatibility": [
+            "Мы с партнёром легко находим общий язык в спорных вопросах.",
+            "Наши взгляды на жизнь совпадают.",
+            "Мы поддерживаем друг друга в трудных ситуациях.",
+            "Нам нравится проводить время вместе.",
+            "Мы уважаем личные границы друг друга."
+        ],
+        "parenting": [
+            "Я часто объясняю ребёнку, почему его поведение неправильно.",
+            "Я редко хвалю ребёнка, чтобы он не зазнавался.",
+            "Я всегда прислушиваюсь к мнению ребёнка.",
+            "Я строго контролирую, с кем дружит мой ребёнок.",
+            "Я поощряю ребёнка за любые успехи."
+        ],
+        "self_acceptance": [
+            "Я принимаю себя таким, какой я есть.",
+            "Мне трудно прощать себе ошибки.",
+            "Я считаю себя достойным любви и уважения.",
+            "Я часто критикую себя за недостатки.",
+            "Я доволен своей внешностью."
+        ],
+        "self_esteem": [
+            "Поставьте себе оценку от 1 до 10, как вы оцениваете свою уверенность в себе.",
+            "Поставьте оценку своей способности достигать целей.",
+            "Оцените свою социальную привлекательность.",
+            "Оцените, насколько вы довольны своей профессией.",
+            "Оцените свою способность справляться со стрессом."
+        ]
+    }
+    if test_id not in questions_map:
+        raise HTTPException(404, "Тест не найден")
+    return {"test_id": test_id, "questions": questions_map[test_id], "scale": "1-5"}
+
+@app.post("/tests/submit")
+async def submit_test(request: TestSubmitRequest):
+    """Принимает ответы и возвращает результат"""
+    if not TEST_HANDLERS_AVAILABLE:
+        # Заглушка: просто суммируем баллы и даём интерпретацию
+        total = sum(request.answers)
+        avg = total / len(request.answers)
+        if request.test_id == "anxiety":
+            if avg <= 2:
+                result = "Низкий уровень тревожности. Вы спокойны и уравновешены."
+            elif avg <= 3.5:
+                result = "Средний уровень тревожности. Рекомендуется обратить внимание на методы релаксации."
+            else:
+                result = "Высокий уровень тревожности. Рекомендуется обратиться к психологу."
+        elif request.test_id == "compatibility":
+            if avg >= 4:
+                result = "Высокая совместимость. У вас гармоничные отношения."
+            elif avg >= 3:
+                result = "Средняя совместимость. Есть зоны для роста."
+            else:
+                result = "Низкая совместимость. Рекомендуется работа над отношениями."
+        elif request.test_id == "parenting":
+            if avg >= 4:
+                result = "Демократичный стиль воспитания. Вы создаёте здоровую атмосферу."
+            elif avg >= 3:
+                result = "Смешанный стиль. Обратите внимание на баланс контроля и поддержки."
+            else:
+                result = "Авторитарный стиль. Возможно, стоит больше прислушиваться к ребёнку."
+        elif request.test_id == "self_acceptance":
+            if avg >= 4:
+                result = "Высокий уровень самопринятия. Вы уверены в себе."
+            elif avg >= 3:
+                result = "Средний уровень. Работайте над любовью к себе."
+            else:
+                result = "Низкий уровень самопринятия. Рекомендуется консультация психолога."
+        elif request.test_id == "self_esteem":
+            if avg >= 8:
+                result = "Высокая самооценка. Вы адекватно оцениваете свои возможности."
+            elif avg >= 5:
+                result = "Средняя самооценка. Есть над чем работать."
+            else:
+                result = "Низкая самооценка. Важно развивать уверенность."
+        else:
+            result = "Спасибо за прохождение теста!"
+        return {"result": result}
+
+    # Если test_handlers доступны, используем их
+    try:
+        if request.test_id == "anxiety":
+            result = calculate_anxiety(request.answers)
+        elif request.test_id == "compatibility":
+            result = calculate_compatibility(request.answers)
+        elif request.test_id == "parenting":
+            result = calculate_parenting_style(request.answers)
+        elif request.test_id == "self_acceptance":
+            result = calculate_self_acceptance(request.answers)
+        elif request.test_id == "self_esteem":
+            result = calculate_self_esteem(request.answers)
+        else:
+            raise HTTPException(404, "Тест не найден")
+        # Можно сохранить результат в БД
+        return {"result": result}
+    except Exception as e:
+        logger.exception("Ошибка при расчёте теста")
+        raise HTTPException(500, str(e))
 
 # ========================
 # Статика

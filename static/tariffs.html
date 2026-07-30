@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Тарифы — Доктор Хауз</title>
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        .tariffs-container { max-width: 1200px; margin: 0 auto; padding: 2rem 1rem; }
+        .tariffs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 2rem; margin-top: 2rem; }
+        .tariff-card { background: #fff; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); padding: 2rem 1.5rem; text-align: center; transition: transform 0.2s; }
+        .tariff-card:hover { transform: translateY(-5px); }
+        .tariff-card h3 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+        .tariff-card .price { font-size: 2.2rem; font-weight: 700; color: #2c3e66; margin: 1rem 0; }
+        .tariff-card .price small { font-size: 1rem; font-weight: 400; color: #666; }
+        .tariff-card ul { text-align: left; list-style: none; padding: 0; margin: 1rem 0; }
+        .tariff-card ul li { padding: 0.3rem 0; border-bottom: 1px solid #eee; }
+        .tariff-card ul li:last-child { border-bottom: none; }
+        .btn-pay { background: #2c3e66; color: white; border: none; padding: 0.8rem 1.5rem; border-radius: 40px; font-size: 1rem; cursor: pointer; transition: background 0.2s; }
+        .btn-pay:hover { background: #1f2c4a; }
+        .btn-donate { background: #e67e22; }
+        .btn-donate:hover { background: #d35400; }
+        .back-link { display: inline-block; margin-top: 2rem; color: #2c3e66; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="tariffs-container">
+        <h1>💰 Тарифы Доктора Хауз</h1>
+        <p>Выберите подписку и получите неограниченный доступ к психологической поддержке 24/7 в Telegram и на сайте, всем тестам, дневнику настроения и советам эксперта.</p>
+
+        <div class="tariffs-grid">
+            <div class="tariff-card">
+                <h3>1 месяц</h3>
+                <div class="price">490 <small>₽</small></div>
+                <ul>
+                    <li>✔ Неограниченные консультации</li>
+                    <li>✔ Все психологические тесты</li>
+                    <li>✔ Дневник настроения</li>
+                    <li>✔ Советы дня</li>
+                </ul>
+                <button class="btn-pay" data-amount="490" data-plan="month">Оплатить</button>
+            </div>
+            <div class="tariff-card">
+                <h3>3 месяца</h3>
+                <div class="price">1 290 <small>₽</small></div>
+                <ul>
+                    <li>✔ Всё из 1 месяца</li>
+                    <li>✔ Экономия 180 ₽</li>
+                    <li>✔ Приоритетная поддержка</li>
+                </ul>
+                <button class="btn-pay" data-amount="1290" data-plan="quarter">Оплатить</button>
+            </div>
+            <div class="tariff-card">
+                <h3>6 месяцев</h3>
+                <div class="price">2 490 <small>₽</small></div>
+                <ul>
+                    <li>✔ Всё из 3 месяцев</li>
+                    <li>✔ Экономия 450 ₽</li>
+                    <li>✔ Доступ к эксклюзивным вебинарам</li>
+                </ul>
+                <button class="btn-pay" data-amount="2490" data-plan="halfyear">Оплатить</button>
+            </div>
+            <div class="tariff-card">
+                <h3>12 месяцев</h3>
+                <div class="price">3 990 <small>₽</small></div>
+                <ul>
+                    <li>✔ Всё из 6 месяцев</li>
+                    <li>✔ Экономия 1 890 ₽</li>
+                    <li>✔ Личный кабинет с аналитикой</li>
+                </ul>
+                <button class="btn-pay" data-amount="3990" data-plan="year">Оплатить</button>
+            </div>
+        </div>
+
+        <div style="margin-top: 3rem; text-align: center;">
+            <p>Или поддержите проект добровольным пожертвованием:</p>
+            <a href="/donate.html" class="btn-pay btn-donate">❤️ Пожертвовать</a>
+        </div>
+
+        <a href="/" class="back-link">← Вернуться в чат</a>
+    </div>
+
+    <script>
+        document.querySelectorAll('.btn-pay[data-amount]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const amount = parseFloat(btn.dataset.amount);
+                const description = `Premium подписка на ${btn.dataset.plan}`;
+                // Получаем user_id из localStorage (если есть)
+                let user_id = localStorage.getItem('userId');
+                if (!user_id) {
+                    // Если нет, пробуем получить из сессии (можно запросить у пользователя или просто использовать 0)
+                    user_id = prompt('Введите ваш ID (или 0 для гостя):', '0');
+                    if (user_id === null) return;
+                }
+                try {
+                    const response = await fetch('/create_premium_payment', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ user_id: parseInt(user_id) })
+                    });
+                    const data = await response.json();
+                    if (data.confirmation_url) {
+                        window.location.href = data.confirmation_url;
+                    } else {
+                        alert('Ошибка при создании платежа: ' + JSON.stringify(data));
+                    }
+                } catch (err) {
+                    alert('Ошибка соединения: ' + err.message);
+                }
+            });
+        });
+    </script>
+</body>
+</html>
