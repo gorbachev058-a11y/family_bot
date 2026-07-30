@@ -127,7 +127,79 @@ init_dialogues_db()
 init_forum_db()
 
 # ========================
-# Авторизация через Telegram (Bearer JWT)
+# Миграция: добавляем колонку guest_id в users, если её нет
+# ========================
+def migrate_users():
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
+    c.execute("PRAGMA table_info(users)")
+    columns = [col[1] for col in c.fetchall()]
+    if "guest_id" not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN guest_id TEXT")
+        logger.info("Добавлена колонка guest_id в таблицу users")
+    conn.commit()
+    conn.close()
+
+# ========================
+# Бесплатный лимит сообщений для незарегистрированных
+# ========================
+FREE_MESSAGE_LIMIT = 10  # бесплатных сообщений
+
+def init_free_db():
+    os.makedirs("data", exist_ok=True)
+    conn = sqlite3.connect("data/free_usage.db")
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS free_usage (
+            user_id TEXT PRIMARY KEY,
+            message_count INTEGER DEFAULT 0,
+            first_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def get_free_count(user_id: str) -> int:
+    conn = sqlite3.connect("data/free_usage.db")
+    c = conn.cursor()
+    c.execute("SELECT message_count FROM free_usage WHERE user_id=?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    return row[0] if row else 0
+
+def increment_free_count(user_id: str):
+    conn = sqlite3.connect("data/free_usage.db")
+    c = conn.cursor()
+    c.execute("INSERT INTO free_usage (user_id, message_count) VALUES (?, 1) "
+              "ON CONFLICT(user_id) DO UPDATE SET message_count = message_count + 1", (user_id,))
+    conn.commit()
+    conn.close()
+
+async def check_free_limit(user_id: str) -> bool:
+    # Проверяем, есть ли у пользователя активная подписка (premium)
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
+    # Проверяем по user_id (может быть как числовой id, так и текстовый guest_id)
+    c.execute("SELECT premium_until FROM users WHERE id=? OR guest_id=?", (user_id, user_id))
+    row = c.fetchone()
+    conn.close()
+    if row and row[0]:
+        premium_until = datetime.fromisoformat(row[0])
+        if premium_until > datetime.now():
+            return True  # есть активная подписка – безлимит
+
+    # Проверяем бесплатный лимит
+    count = get_free_count(user_id)
+    if count < FREE_MESSAGE_LIMIT:
+        increment_free_count(user_id)
+        return True
+    return False
+
+init_free_db()
+migrate_users()
+
+# ========================
+# Авторизация через Telegram (Bearer JWT) – используется для защищённых эндпоинтов
 # ========================
 security = HTTPBearer()
 
@@ -145,10 +217,12 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
     username: str = ""
+    guest_id: Optional[str] = None  # добавлено для синхронизации
 
 class LoginRequest(BaseModel):
     email: str
     password: str
+    guest_id: Optional[str] = None  # можно тоже передавать для синхронизации
 
 class ChatRequest(BaseModel):
     message: str
@@ -188,6 +262,7 @@ class TestSubmitRequest(BaseModel):
 @app.post("/auth/register")
 async def register(request: RegisterRequest):
     init_db()
+    migrate_users()  # убедимся, что колонка есть
     conn = sqlite3.connect("data/users.db")
     c = conn.cursor()
     c.execute("SELECT id FROM users WHERE email=?", (request.email,))
@@ -195,14 +270,15 @@ async def register(request: RegisterRequest):
         conn.close()
         raise HTTPException(400, "Email уже используется")
     pwd = hash_password(request.password)
-    c.execute("INSERT INTO users (email, password_hash, username) VALUES (?,?,?)",
-              (request.email, pwd, request.username))
+    c.execute("INSERT INTO users (email, password_hash, username, guest_id) VALUES (?,?,?,?)",
+              (request.email, pwd, request.username, request.guest_id))
     user_id = c.lastrowid
     # Активация триального Premium на 30 дней
     trial_end = (datetime.now() + timedelta(days=30)).isoformat()
     c.execute("UPDATE users SET premium_until=? WHERE id=?", (trial_end, user_id))
     conn.commit()
     conn.close()
+    # Здесь можно было бы перенести диалоги из guest_id в новый user_id, но оставим для будущего
     return {"user_id": user_id, "email": request.email}
 
 @app.post("/auth/login")
@@ -449,9 +525,20 @@ async def run_async_generate(query: str, role: str, user_id: str) -> str:
 # ========================
 # Основные эндпоинты чата и дневника
 # ========================
+
 @app.post("/chat", response_model=ChatResponse)
-async def chat_endpoint(request: ChatRequest, user_data: dict = Depends(get_current_user)):
-    actual_user_id = str(user_data['user_id'])
+async def chat_endpoint(request: ChatRequest):
+    # user_id передаётся с фронтенда (генерируется в localStorage)
+    actual_user_id = request.user_id
+    if not actual_user_id:
+        actual_user_id = f"guest_{datetime.now().timestamp()}"
+
+    # Проверяем лимит бесплатных сообщений
+    if not await check_free_limit(actual_user_id):
+        return ChatResponse(
+            response="🔒 Вы исчерпали бесплатный лимит сообщений. Зарегистрируйтесь, чтобы продолжить пользоваться Доктором Хаузом без ограничений! 👉 /register"
+        )
+
     answer = await run_async_generate(request.message, request.role, actual_user_id)
     return ChatResponse(response=answer)
 
