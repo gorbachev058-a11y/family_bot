@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Спасибо за пожертвование — Доктор Хауз</title>
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        body {
+            background: #1a1a2e;
+            color: #e0e0e0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+        .thanks-container {
+            max-width: 600px;
+            width: 100%;
+            background: #16213e;
+            border-radius: 20px;
+            padding: 40px 30px;
+            text-align: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+        }
+        .thanks-container .heart {
+            font-size: 4rem;
+            margin-bottom: 10px;
+        }
+        .thanks-container h1 {
+            color: #e67e22;
+            margin: 10px 0;
+        }
+        .thanks-container p {
+            font-size: 1.1em;
+            line-height: 1.6;
+            color: #ccc;
+        }
+        .btn-chat {
+            display: inline-block;
+            background: #e94560;
+            color: white;
+            padding: 12px 30px;
+            border-radius: 40px;
+            text-decoration: none;
+            font-weight: bold;
+            margin-top: 20px;
+            transition: background 0.2s;
+        }
+        .btn-chat:hover {
+            background: #c0392b;
+        }
+        .btn-donate-again {
+            display: inline-block;
+            background: #0f3460;
+            color: #ccc;
+            padding: 10px 25px;
+            border-radius: 40px;
+            text-decoration: none;
+            margin-top: 10px;
+            transition: background 0.2s;
+        }
+        .btn-donate-again:hover {
+            background: #1a4a7a;
+            color: white;
+        }
+        footer {
+            margin-top: 30px;
+            font-size: 0.8em;
+            color: #666;
+        }
+        footer a {
+            color: #888;
+            text-decoration: none;
+            margin: 0 10px;
+        }
+        footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="thanks-container">
+        <div class="heart">❤️</div>
+        <h1>Спасибо за вашу поддержку!</h1>
+        <p>
+            Ваше пожертвование помогает развивать проект «Доктор Хауз» и делать психологическую помощь доступнее для тех, кто в ней нуждается.
+        </p>
+        <p style="font-size: 0.95em; color: #aaa;">
+            Если у вас есть вопросы или вы хотите поделиться впечатлениями — мы всегда на связи в чате.
+        </p>
+        <a href="/" class="btn-chat">Перейти в чат</a>
+        <br>
+        <a href="/donate.html" class="btn-donate-again">❤️ Сделать ещё пожертвование</a>
+        <footer>
+            <a href="/docs/privacy_policy.html" target="_blank">Политика конфиденциальности</a>
+            <a href="/docs/user_agreement.html" target="_blank">Пользовательское соглашение</a>
+        </footer>
+    </div>
+</body>
+</html>
