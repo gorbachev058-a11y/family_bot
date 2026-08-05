@@ -132,14 +132,19 @@ init_forum_db()
 def migrate_users():
     conn = sqlite3.connect("data/users.db")
     c = conn.cursor()
-    c.execute("PRAGMA table_info(users)")
-    columns = [col[1] for col in c.fetchall()]
-    if "guest_id" not in columns:
-        c.execute("ALTER TABLE users ADD COLUMN guest_id TEXT")
-        logger.info("Добавлена колонка guest_id в таблицу users")
+    # Проверяем, существует ли таблица users
+    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+    if c.fetchone():
+        # Таблица существует, проверяем колонку
+        c.execute("PRAGMA table_info(users)")
+        columns = [col[1] for col in c.fetchall()]
+        if "guest_id" not in columns:
+            c.execute("ALTER TABLE users ADD COLUMN guest_id TEXT")
+            logger.info("Добавлена колонка guest_id в таблицу users")
+    else:
+        logger.info("Таблица users ещё не создана, пропускаем миграцию")
     conn.commit()
     conn.close()
-
 # ========================
 # Бесплатный лимит сообщений для незарегистрированных
 # ========================
@@ -196,6 +201,8 @@ async def check_free_limit(user_id: str) -> bool:
     return False
 
 init_free_db()
+from auth_db import init_db
+init_db()
 migrate_users()
 
 # ========================

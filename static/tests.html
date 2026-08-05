@@ -79,7 +79,7 @@
                 document.getElementById('testTitle').textContent = data.questions.length > 0 ? 'Тест' : 'Вопросы не найдены';
                 const container = document.getElementById('questionsContainer');
                 container.innerHTML = '';
-                userAnswers = new Array(data.questions.length).fill(null);
+                    userAnswers = new Array(data.questions.length).fill(null);
                 data.questions.forEach((q, index) => {
                     const div = document.createElement('div');
                     div.className = 'question';
@@ -94,6 +94,12 @@
                             `).join('')}
                         </div>
                     `;
+                    container.innerHTML = `
+                       <p style="font-size:0.9em; color:#aaa; margin-bottom:1.5rem;">
+                           Оцените каждое утверждение по шкале от 1 до 5:<br>
+                           <span style="color:#ccc;">1 — совершенно не согласен, 5 — полностью согласен</span>
+                       </p>
+                     `;
                     container.appendChild(div);
                     // Сохраняем выбранные ответы
                     const radios = div.querySelectorAll('input[type="radio"]');

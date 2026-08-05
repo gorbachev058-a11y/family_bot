@@ -253,3 +253,48 @@ if (chatWindow.children.length === 0) {
     const avatar = ROLE_AVATARS[currentRole] || ROLE_AVATARS["Муж"];
     addMessage(avatar.greeting, false);
 }
+// Регистрация
+const registerBtn = document.getElementById('registerBtn');
+const registerModal = document.getElementById('registerModal');
+const closeRegister = document.querySelector('.close-register');
+const switchToLogin = document.getElementById('switchToLogin');
+
+if (registerBtn) {
+    registerBtn.addEventListener('click', () => {
+        registerModal.style.display = 'block';
+    });
+}
+if (closeRegister) {
+    closeRegister.addEventListener('click', () => {
+        registerModal.style.display = 'none';
+    });
+}
+
+// Обработка формы регистрации
+document.getElementById('registerForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const username = document.getElementById('regUsername').value;
+    const email = document.getElementById('regEmail').value;
+    const password = document.getElementById('regPassword').value;
+    const guest_id = userId; // текущий гостевой ID
+    try {
+        const res = await fetch('/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password, username, guest_id })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            alert('Регистрация успешна! Вы получили 30 дней Premium.');
+            registerModal.style.display = 'none';
+            // Можно сохранить user_id и обновить интерфейс
+            localStorage.setItem('userId', data.user_id);
+            // Перезагрузить страницу, чтобы применить новый статус
+            location.reload();
+        } else {
+            alert('Ошибка: ' + (data.detail || 'попробуйте другой email'));
+        }
+    } catch (err) {
+        alert('Ошибка соединения: ' + err.message);
+    }
+});

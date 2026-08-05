@@ -1,15 +1,20 @@
 import asyncio
 import logging
-from typing import Optional
+from typing import Optional, List, Dict
+
+# Импортируем реальные функции из yandex_gpt
+from yandex_gpt import ask_yandex_gpt, get_system_prompt_for_role
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Глобальные переменные (для примера)
+# Глобальные переменные
 _searcher = None
-_conversation_history = {}
+_conversation_history: Dict[str, List[Dict[str, str]]] = {}
 cache = {}
+
+# Эти переменные должны быть определены в config или передаваться
 TAVILY_USE_SEARCH = False  # Замените на ваше значение
 YC_USE_GPT = True  # Замените на ваше значение
 
@@ -19,10 +24,6 @@ YC_USE_GPT = True  # Замените на ваше значение
 # ============================================================
 
 def detect_user_state(query: str, history: list) -> str:
-    """
-    Определяет состояние пользователя по тексту запроса и истории.
-    Возвращает: 'venting', 'angry', 'confused', 'new_dialog', 'asking', 'witness'
-    """
     lower_q = query.lower()
 
     # --- СНАЧАЛА ПРОВЕРЯЕМ НА СВИДЕТЕЛЯ НАСИЛИЯ ---
@@ -34,8 +35,17 @@ def detect_user_state(query: str, history: list) -> str:
     if any(kw in lower_q for kw in witness_keywords):
         return "witness"
 
-    # --- ОСТАЛЬНЫЕ СОСТОЯНИЯ ---
-    # Если пользователь только начал диалог (мало сообщений в истории)
+    # --- ПРОВЕРКА НА ПОВТОРЯЮЩИЕСЯ ВОПРОСЫ ---
+    if len(history) >= 4:
+        user_questions = [msg["content"] for msg in history if msg["role"] == "user"]
+        if len(user_questions) >= 2:
+            last_q = user_questions[-1].lower()
+            prev_q = user_questions[-2].lower()
+            common_phrases = ["разобраться", "что делать", "как быть", "что мне делать", "как понять", "почему", "что не так"]
+            if any(phrase in last_q for phrase in common_phrases) and any(phrase in prev_q for phrase in common_phrases):
+                return "repetitive"
+
+    # Остальные состояния...
     if len(history) < 2:
         return "new_dialog"
 
@@ -64,10 +74,11 @@ def detect_user_state(query: str, history: list) -> str:
 
 
 def get_searcher():
+    """Возвращает экземпляр поисковика Tavily (если используется)."""
     global _searcher
     if _searcher is None and TAVILY_USE_SEARCH:
         # Здесь должен быть импорт TavilySearcher
-        # from tavily import TavilySearcher
+        # from tavily_search import TavilySearcher
         # _searcher = TavilySearcher()
         pass
     return _searcher
@@ -150,6 +161,17 @@ def build_fallback_answer(query: str, context_chunks: list, role: str) -> str:
                 "- Центр социальной поддержки семьи (по месту жительства)\n\n"
                 "Помните: насилие недопустимо, вы не одни. ✅"
             )
+            # Если тема — самоанализ или отношения, добавим готовые упражнения
+            if any(kw in query.lower() for kw in ["разобраться в себе", "понять себя", "что делать"]):
+                exercises = (
+                    "\n\n**Практические упражнения для самоанализа:**\n"
+                    "1. **Дневник чувств**: Каждый вечер записывайте 3 эмоции, которые испытывали за день, и что их вызвало.\n"
+                    "2. **Техника «пустой стул»**: Представьте, что напротив сидит ваша девушка. Скажите ей вслух всё, что хотели бы сказать, а затем представьте её ответ.\n"
+                    "3. **Список ожиданий**: Напишите два списка — что вы ждали от отношений и что вы давали. Сравните.\n"
+                    "4. **Вопросы к себе**: «Что я могу изменить в себе, чтобы быть счастливым независимо от партнёра?»\n"
+                    "5. **Визуализация будущего**: Представьте свою жизнь через 5 лет — с ней и без неё. Что вам ближе?\n"
+                )
+                answer += exercises
         return answer
     else:
         if not context_chunks:
@@ -209,11 +231,17 @@ async def generate_answer(query: str, context_chunks: list, role: str, user_id: 
             "Не задавай вопросов, не перебивай, не советуй. Просто выслушай и покажи, что ты рядом. "
             "Используй фразы: «Я тебя слышу», «Это действительно тяжело», «Расскажи, что чувствуешь»."
         )
+    elif state == "repetitive":
+        state_instruction = (
+            "[ВАЖНО] Пользователь уже задавал похожий вопрос ранее. "
+            "НЕ задавай уточняющих вопросов и НЕ переспрашивай. "
+            "Сразу дай прямой, конкретный и практический ответ без дополнительных вопросов. "
+            "Используй максимум информации из базы знаний, чтобы дать полезные упражнения или техники."
+        )
     elif state == "angry":
         state_instruction = (
             "[ВАЖНО] Пользователь раздражён и зол. "
-            "НЕ переспрашивай, НЕ задавай уточняющих вопросов. Извинись, если это уместно, и сразу переходи к сути. "
-            "Будь краток и полезен. Если не знаешь, что сказать, так и скажи: «Давай по делу, я слушаю»."
+            "НЕ переспрашивай, зен. Если не знаешь, что сказать, так и скажи: «Давай по делу, я слушаю»."
         )
     elif state == "confused":
         state_instruction = (
@@ -279,6 +307,7 @@ async def generate_answer(query: str, context_chunks: list, role: str, user_id: 
     add_to_detector_history(user_id_str, "user", query)
     # --- Конец детектора ---
 
+    # Если YandexGPT выключен — только база знаний
     if not YC_USE_GPT:
         # Режим без ИИ (только база знаний)
         if not context_chunks:
@@ -297,24 +326,28 @@ async def generate_answer(query: str, context_chunks: list, role: str, user_id: 
         response_parts.append("\n\n💡 *Для более точных ответов включите YandexGPT в настройках.*")
         return "\n".join(response_parts)
 
-    # Режим с ИИ
+    # --- Режим с ИИ ---
     try:
-        system_prompt = get_system_prompt_for_role(role)  # функция из config.py
-        search_results_text = None
+        # Получаем системный промпт для роли
+        system_prompt = get_system_prompt_for_role(role)
 
+        # Если включён Tavily, выполняем поиск
+        search_results_text = None
         if TAVILY_USE_SEARCH:
             searcher = get_searcher()
             if searcher:
                 logger.info("Запуск Tavily поиска...")
-                search_results = await searcher.search(query)
-                if search_results:
-                    search_results_text = searcher.format_results_for_prompt(search_results)
-                    logger.info("Tavily поиск завершён успешно")
-                else:
-                    logger.warning("Tavily поиск не дал результатов")
+                # Здесь должен быть реальный вызов поиска
+                # search_results = await searcher.search(query)
+                # if search_results:
+                #     search_results_text = searcher.format_results_for_prompt(search_results)
+                #     logger.info("Tavily поиск завершён успешно")
+                # else:
+                #     logger.warning("Tavily поиск не дал результатов")
+                pass
 
         logger.info("Отправка запроса в YandexGPT...")
-        answer = await ask_yandex_gpt(  # функция должна быть определена отдельно
+        answer = await ask_yandex_gpt(
             user_message=enhanced_query,
             system_prompt=system_prompt,
             temperature=0.7,
@@ -350,31 +383,3 @@ async def generate_answer(query: str, context_chunks: list, role: str, user_id: 
     except Exception as e:
         logger.error(f"Ошибка в generate_answer: {e}", exc_info=True)
         return f"Произошла ошибка при генерации ответа: {str(e)}"
-
-
-# ============================================================
-# 4. ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ (ДОЛЖНА БЫТЬ В CONFIG ИЛИ ОТДЕЛЬНО)
-# ============================================================
-
-def get_system_prompt_for_role(role: str) -> str:
-    """Возвращает системный промпт для роли из config.py"""
-    from config import ROLE_AVATARS
-    return ROLE_AVATARS.get(role, {}).get("system_prompt", "")
-
-
-# ============================================================
-# 5. ЗАГЛУШКА ДЛЯ ASK_YANDEX_GPT (ЗАМЕНИТЕ НА ВАШУ РЕАЛЬНУЮ ФУНКЦИЮ)
-# ============================================================
-
-async def ask_yandex_gpt(user_message: str, system_prompt: str, temperature: float,
-                         max_tokens: int, search_results: str = None,
-                         user_id: int = None, role: str = None) -> str:
-    """
-    ЗАГЛУШКА — замените на вашу реальную функцию вызова YandexGPT.
-    """
-    # Здесь должен быть ваш реальный код вызова YandexGPT API
-    # Пример:
-    # import requests
-    # response = requests.post(...)
-    # return response.json()['result']['alternatives'][0]['message']['text']
-    return "Это заглушка. Замените ask_yandex_gpt на вашу реальную функцию."
