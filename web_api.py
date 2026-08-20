@@ -281,7 +281,7 @@ async def register(request: RegisterRequest):
               (request.email, pwd, request.username, request.guest_id))
     user_id = c.lastrowid
     # Активация триального Premium на 30 дней
-    trial_end = (datetime.now() + timedelta(days=30)).isoformat()
+    trial_end = (datetime.now() + timedelta(days=10)).isoformat()
     c.execute("UPDATE users SET premium_until=? WHERE id=?", (trial_end, user_id))
     conn.commit()
     conn.close()
@@ -464,7 +464,7 @@ def build_fallback_from_chunks(query: str, chunks: list, role: str, user_name: s
     if not chunks:
         return ("Слушай, в моей базе знаний пока нет точного ответа на этот вопрос. "
                 "Но я рядом. Расскажи, что у тебя на душе? Если чувствуешь, что нужна срочная помощь — звони 112 или 8-800-2000-122.")
-    if role == "Муж":
+    if role == "Мужчина":
         prefix = "Слушай, у меня нет готового ответа, но вот что я знаю и что может тебе помочь:\n\n"
     else:
         prefix = "Вот информация, которая может быть полезна:\n\n"
@@ -476,7 +476,7 @@ def build_fallback_from_chunks(query: str, chunks: list, role: str, user_name: s
             clean = lines[1] if len(lines) > 1 else clean
         cleaned_chunks.append(f"• {clean}")
     answer = prefix + "\n\n".join(cleaned_chunks)
-    if role == "Муж":
+    if role == "Мужчиа":
         answer += "\n\nЭто не всё, что можно сказать. Давай продолжим разговор — расскажи, что тебя сильнее всего цепляет из написанного?"
     else:
         answer += "\n\nЕсли нужно прояснить что-то из этого, просто спросите."
@@ -487,11 +487,15 @@ def build_fallback_from_chunks(query: str, chunks: list, role: str, user_name: s
 # ========================
 async def run_async_generate(query: str, role: str, user_id: str) -> str:
     try:
+        # Извлекаем имя, если пользователь представился
         user_name = extract_and_store_name(user_id, query)
-        if user_name:
-            query_with_name = f"Меня зовут {user_name}. {query}"
-        else:
-            query_with_name = query
+        if not user_name:
+            # Проверяем, не сохранено ли имя ранее
+            user_name = user_names.get(user_id, '')
+
+        # Если имя есть, вставляем обращение в начало ответа
+        greeting_prefix = f"{user_name}, " if user_name else ""
+
         logger.info(f"Генерация для роли: {role}")
         context_chunks = knowledge_base.search(query, top_k=10)
         logger.info(f"Поиск завершён, найдено чанков: {len(context_chunks)}")
@@ -524,6 +528,9 @@ async def run_async_generate(query: str, role: str, user_id: str) -> str:
         add_to_history(user_id, query, answer)
         save_dialogue(user_id, role, query, answer)
         return answer
+
+        final_answer = greeting_prefix + answer
+        return final_answer
 
     except Exception as e:
         logger.exception("Ошибка при генерации ответа")
@@ -586,7 +593,7 @@ async def advice_endpoint():
 
 @app.get("/greeting/{role}")
 async def get_greeting(role: str):
-    avatar = ROLE_AVATARS.get(role, ROLE_AVATARS["Муж"])
+    avatar = ROLE_AVATARS.get(role, ROLE_AVATARS["Мужчина"])
     return {"greeting": avatar["greeting"]}
 
 @app.get("/dialogues/{user_id}")

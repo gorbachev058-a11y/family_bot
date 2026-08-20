@@ -1,14 +1,13 @@
 import asyncio
 import logging
 import time
-from datetime import datetime, timedelta  # добавлено для триала
-from aiogram import Bot, Dispatcher, types
+from datetime import datetime, timedelta
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, \
-    InlineKeyboardButton
-from aiogram import F
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
+
 from config import (
     BOT_TOKEN, KNOWLEDGE_BASE_PATH,
     YC_USE_GPT, TAVILY_USE_SEARCH
@@ -24,10 +23,9 @@ from states import (
     CompatibilityTest, ParentingStyleTest, SelfAcceptanceTest
 )
 from token_usage import init_db
-from auth_db import init_db as init_auth_db  # переименуем, чтобы избежать путаницы
+from auth_db import init_db as init_auth_db
 import sqlite3
 from values_tests import router as values_router
-
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -48,8 +46,8 @@ kb = KnowledgeBase(KNOWLEDGE_BASE_PATH)
 # Клавиатура выбора роли
 role_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="Муж")],
-        [KeyboardButton(text="Жена")],
+        [KeyboardButton(text="Мужчина")],
+        [KeyboardButton(text="Женщина")],
         [KeyboardButton(text="Пара (вместе)")],
         [KeyboardButton(text="Ребёнок")]
     ],
@@ -57,18 +55,18 @@ role_keyboard = ReplyKeyboardMarkup(
     input_field_placeholder="Выберите вашу роль..."
 )
 
-
 # Установка меню команд
-async def set_bot_commands():
+async def set_bot_command():
     commands = [
         types.BotCommand(command="start", description="🚀 Начать работу / выбрать роль"),
         types.BotCommand(command="tests", description="📋 Психологические тесты"),
         types.BotCommand(command="changerole", description="🔄 Сменить роль"),
         types.BotCommand(command="help", description="❓ Помощь"),
-        types.BotCommand(command="legal", description="📄 Юридическая информация")
+        types.BotCommand(command="legal", description="📄 Юридическая информация"),
+        types.BotCommand(command="premium", description="⭐ Статус Premium"),
+        types.BotCommand(command="donate", description="❤️ Поддержать проект")
     ]
     await bot.set_my_commands(commands)
-
 
 # Функция для отправки длинных сообщений
 async def send_long_message(message: types.Message, text: str):
@@ -95,8 +93,8 @@ async def send_long_message(message: types.Message, text: str):
             else:
                 await message.answer(part)
 
+# -------------------- Команды --------------------
 
-# Команда /start
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     init_auth_db()
@@ -108,18 +106,15 @@ async def cmd_start(message: types.Message, state: FSMContext):
     user_row = c.fetchone()
 
     if not user_row:
-        # Создаём пользователя без email
         c.execute("INSERT INTO users (telegram_id, username) VALUES (?, ?)",
                   (telegram_id, message.from_user.full_name or ""))
         conn.commit()
-        # Выдаём триальный Premium на 30 дней
-        trial_end = (datetime.now() + timedelta(days=30)).isoformat()
+        trial_end = (datetime.now() + timedelta(days=10)).isoformat()  # 10 дней
         c.execute("UPDATE users SET premium_until=? WHERE telegram_id=?", (trial_end, telegram_id))
         conn.commit()
     else:
-        # Если пользователь уже есть, но премиум не был выдан (старый пользователь), можно выдать триал
-        if user_row[1] is None:  # premium_until is null
-            trial_end = (datetime.now() + timedelta(days=30)).isoformat()
+        if user_row[1] is None:
+            trial_end = (datetime.now() + timedelta(days=10)).isoformat()
             c.execute("UPDATE users SET premium_until=? WHERE telegram_id=?", (trial_end, telegram_id))
             conn.commit()
 
@@ -128,24 +123,24 @@ async def cmd_start(message: types.Message, state: FSMContext):
     welcome_text = (
         "👋 Здравствуйте! Я — **Доктор Хауз**, ваш семейный психолог.\n\n"
         "Перед началом работы ознакомьтесь с важными документами:\n"
-        "📄 <a href='http://127.0.0.1:8000/docs/privacy_policy.html'>Политика конфиденциальности</a>\n"
-        "📄 <a href='http://127.0.0.1:8000/docs/user_agreement.html'>Пользовательское соглашение</a>\n"
-        "📄 <a href='http://127.0.0.1:8000/docs/consent_form.html'>Согласие на обработку данных</a>\n\n"
-        "📄 <a href='http://127.0.0.1:8000/docs/public_offer.html'>Публичная оферта</a>\n"
+        "📄 <a href='https://doctorhauz.ru/docs/privacy_policy.html'>Политика конфиденциальности</a>\n"
+        "📄 <a href='https://doctorhauz.ru/docs/user_agreement.html'>Пользовательское соглашение</a>\n"
+        "📄 <a href='https://doctorhauz.ru/docs/consent_form.html'>Согласие на обработку данных</a>\n\n"
+        "📄 <a href='https://doctorhauz.ru/docs/public_offer.html'>Публичная оферта</a>\n"
         "Нажимая кнопку ниже, вы подтверждаете, что принимаете условия."
     )
     btn_accept = InlineKeyboardButton(text="✅ Принимаю условия", callback_data="accept_terms")
     markup = InlineKeyboardMarkup(inline_keyboard=[[btn_accept]])
     await message.answer(welcome_text, parse_mode="HTML", reply_markup=markup)
-# Команды премиум и донат
 
-@dp.message(commands=['premium'])
+@dp.message(Command("premium"))
 async def premium_status(message: types.Message):
     telegram_id = message.from_user.id
     conn = sqlite3.connect("data/users.db")
     c = conn.cursor()
     c.execute("SELECT premium_until FROM users WHERE telegram_id=?", (telegram_id,))
     row = c.fetchone()
+    conn.close()
     if row and row[0]:
         until = datetime.fromisoformat(row[0])
         if until > datetime.now():
@@ -154,32 +149,28 @@ async def premium_status(message: types.Message):
             text = "⚠️ Срок Premium истёк. Продлите подписку."
     else:
         text = "У вас нет Premium. Оформите подписку."
-    # Кнопка для оплаты (ссылка на веб-сайт или создание платежа)
-    markup = InlineKeyboardMarkup()
-    btn = InlineKeyboardButton("Оформить Premium", url="https://doctorhauz.ru/premium")
-    markup.add(btn)
+    markup = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton("Оформить Premium", url="https://doctorhauz.ru/tariffs.html")
+    ]])
     await message.answer(text, reply_markup=markup)
 
-@dp.message(commands=['donate'])
+@dp.message(Command("donate"))
 async def donate(message: types.Message):
-    # Предложим фиксированную сумму или ввести свою
-    markup = InlineKeyboardMarkup()
-    btn_100 = InlineKeyboardButton("100 ₽", callback_data="donate_100")
-    btn_500 = InlineKeyboardButton("500 ₽", callback_data="donate_500")
-    btn_any = InlineKeyboardButton("Своя сумма", url="https://doctorhauz.ru/donate")
-    markup.add(btn_100, btn_500, btn_any)
-    await message.answer("Поддержите проект чашечкой кофе! ☕", reply_markup=markup)
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton("100 ₽", callback_data="donate_100")],
+        [InlineKeyboardButton("500 ₽", callback_data="donate_500")],
+        [InlineKeyboardButton("Своя сумма", url="https://doctorhauz.ru/donate.html")]
+    ])
+    await message.answer("❤️ Поддержите проект чашечкой кофе!", reply_markup=markup)
 
-@dp.callback_query_handler(lambda c: c.data.startswith('donate_'))
+@dp.callback_query(F.data.startswith("donate_"))
 async def process_donate(call: types.CallbackQuery):
     amount = int(call.data.split('_')[1])
-    # Для простоты отправим на веб-страницу с предзаполненной суммой
-    url = f"https://doctorhauz.ru/donate?amount={amount}"
+    url = f"https://doctorhauz.ru/donate.html?amount={amount}"
     await call.message.answer(f"Перейдите по ссылке для оплаты: {url}")
     await call.answer()
 
-# Обработка принятия условий
-@dp.callback_query(F.data == 'accept_terms')
+@dp.callback_query(F.data == "accept_terms")
 async def accept_terms(call: types.CallbackQuery, state: FSMContext):
     await call.message.edit_reply_markup()
     await call.message.answer(
@@ -188,20 +179,16 @@ async def accept_terms(call: types.CallbackQuery, state: FSMContext):
     )
     await state.set_state(UserRole.choosing_role)
 
-
-# Команда /legal
 @dp.message(Command("legal"))
 async def cmd_legal(message: types.Message):
     legal_text = (
-        "📄 <a href='http://127.0.0.1:8000/docs/privacy_policy.html'>Политика конфиденциальности</a>\n"
-        "📄 <a href='http://127.0.0.1:8000/docs/user_agreement.html'>Пользовательское соглашение</a>\n"
-        "📄 <a href='http://127.0.0.1:8000/docs/consent_form.html'>Согласие на обработку данных</a>\n"
-        "📄 <a href='http://127.0.0.1:8000/docs/public_offer.html'>Публичная оферта</a>"
+        "📄 <a href='https://doctorhauz.ru/docs/privacy_policy.html'>Политика конфиденциальности</a>\n"
+        "📄 <a href='https://doctorhauz.ru/docs/user_agreement.html'>Пользовательское соглашение</a>\n"
+        "📄 <a href='https://doctorhauz.ru/docs/consent_form.html'>Согласие на обработку данных</a>\n"
+        "📄 <a href='https://doctorhauz.ru/docs/public_offer.html'>Публичная оферта</a>"
     )
     await message.answer(legal_text, parse_mode="HTML")
 
-
-# Команда /help
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
     await message.answer(
@@ -210,14 +197,14 @@ async def cmd_help(message: types.Message):
         "/tests - психологические тесты\n"
         "/changerole - сменить роль\n"
         "/legal - юридическая информация\n"
+        "/premium - статус подписки\n"
+        "/donate - поддержать проект\n"
         "/help - это сообщение\n\n"
         "Вы можете задавать вопросы текстом или голосом. "
         "Я использую базу знаний по семейной психологии, "
         f"{'а также интернет-поиск' if YC_USE_GPT else 'пока без ИИ'}."
     )
 
-
-# Команда /changerole
 @dp.message(Command("changerole"))
 async def cmd_changerole(message: types.Message, state: FSMContext):
     await message.answer(
@@ -226,8 +213,6 @@ async def cmd_changerole(message: types.Message, state: FSMContext):
     )
     await state.set_state(UserRole.choosing_role)
 
-
-# Команда /tests
 @dp.message(Command("tests"))
 async def cmd_tests(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
@@ -243,12 +228,12 @@ async def cmd_tests(message: types.Message, state: FSMContext):
     )
     await state.set_state(TestStates.choosing_test)
 
+# -------------------- Обработка роли --------------------
 
-# Обработка выбора роли
 @dp.message(UserRole.choosing_role)
 async def role_chosen(message: types.Message, state: FSMContext):
     role = message.text
-    if role not in ["Муж", "Жена", "Пара (вместе)", "Ребёнок"]:
+    if role not in ["Мужчина", "Женщина", "Пара (вместе)", "Ребёнок"]:
         await message.answer(
             "Пожалуйста, выберите роль, используя кнопки ниже.",
             reply_markup=role_keyboard
@@ -258,7 +243,6 @@ async def role_chosen(message: types.Message, state: FSMContext):
     await state.update_data(role=role)
     await state.set_state(UserRole.chatting)
 
-    # Персонализированное приветствие
     if role == "Ребёнок":
         welcome_text = (
             f"✅ Привет! Ты выбрал роль '{role}'.\n\n"
@@ -283,8 +267,8 @@ async def role_chosen(message: types.Message, state: FSMContext):
 
     await message.answer(welcome_text, reply_markup=ReplyKeyboardRemove())
 
+# -------------------- Обработка вопросов --------------------
 
-# Основная функция обработки вопроса
 async def process_question(message: types.Message, state: FSMContext, query: str):
     user_data = await state.get_data()
     role = user_data.get('role', 'не указана')
@@ -327,17 +311,13 @@ async def process_question(message: types.Message, state: FSMContext, query: str
             "📞 8-800-2000-122 (круглосуточно, анонимно)"
         )
 
-
-# Обработка текстовых сообщений в чате
-@dp.message(UserRole.chatting)
+@dp.message(UserRole.chatting, F.text)
 async def handle_text(message: types.Message, state: FSMContext):
     if message.text.startswith('/'):
         return
     await process_question(message, state, message.text)
 
-
-# Обработка голосовых сообщений
-@dp.message(UserRole.chatting, lambda message: message.voice is not None)
+@dp.message(UserRole.chatting, F.voice)
 async def handle_voice(message: types.Message, state: FSMContext):
     processing = await message.answer("🎤 Обрабатываю голосовое сообщение...")
     try:
@@ -356,8 +336,8 @@ async def handle_voice(message: types.Message, state: FSMContext):
         logger.error(f"Ошибка обработки голоса: {e}")
         await message.answer("❌ Произошла ошибка при обработке голосового сообщения. Попробуйте написать текст.")
 
+# -------------------- Обработка всех остальных сообщений --------------------
 
-# Обработка всех остальных сообщений
 @dp.message()
 async def handle_other_messages(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
@@ -382,8 +362,8 @@ async def handle_other_messages(message: types.Message, state: FSMContext):
         return
     await message.answer("Используйте /start для начала работы")
 
+# -------------------- Запуск --------------------
 
-# Запуск бота
 async def main():
     logger.info("Бот запускается...")
     logger.info(f"База знаний загружена, {len(kb.chunks)} чанков")
@@ -391,10 +371,9 @@ async def main():
     init_auth_db()  # для пользователей и подписок
     logger.info(f"YandexGPT: {'Включён' if YC_USE_GPT else 'Выключен'}")
     logger.info(f"Tavily поиск: {'Включён' if TAVILY_USE_SEARCH else 'Выключен'}")
-    await set_bot_commands()
+    await set_bot_command()
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())

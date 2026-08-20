@@ -1,5 +1,5 @@
 // --- Инициализация ---
-let currentRole = localStorage.getItem('role') || 'Муж';
+let currentRole = localStorage.getItem('role') || 'Мужчина';
 let userId = localStorage.getItem('userId');
 if (!userId) {
     userId = crypto.randomUUID ? crypto.randomUUID() : 'user_' + Date.now() + '_' + Math.random();
@@ -8,15 +8,15 @@ if (!userId) {
 
 // Приведение ролей к единому формату
 const roleMapping = {
-    'муж': 'Муж', 'жена': 'Жена', 'пара': 'Пара', 'ребёнок': 'Ребёнок'
+    'муж': 'Муж', 'мужчина': 'Мужчина', 'жена': 'Жена', 'женщина': 'Женщина', 'пара': 'Пара', 'ребёнок': 'Ребёнок'
 };
 if (roleMapping[currentRole]) currentRole = roleMapping[currentRole];
 localStorage.setItem('role', currentRole);
 
 // Аватары
 const ROLE_AVATARS = {
-    "Муж": { greeting: "Привет. Я Соратник. Сам выгребал из ямы. Давай по делу — что у тебя?" },
-    "Жена": { greeting: "Доктор Хауз на связи. Сопли вытру позже, сначала разберем факты. Что случилось?" },
+    "Мужчина": { greeting: "Привет. Я Соратник. Сам выгребал из ямы. Давай по делу — что у тебя?" },
+    "Женщина": { greeting: "Доктор Хауз на связи. Сопли вытру позже, сначала разберем факты. Что случилось?" },
     "Пара": { greeting: "Я Доктор Хауз. Проблемы пар — моя специализация. Кто первый на «операционный стол»?" },
     "Ребёнок": { greeting: "Доктор Хауз на проводе. Что стряслось у твоего мелкого? Рассказывай как есть." }
 };
@@ -92,7 +92,7 @@ roleButtons.forEach(btn => {
             localStorage.setItem('role', newRole);
             setActiveRoleButton(newRole);
             fetch(`/clear_history?user_id=${userId}`, { method: 'POST' });
-            const avatar = ROLE_AVATARS[newRole] || ROLE_AVATARS["Муж"];
+            const avatar = ROLE_AVATARS[newRole] || ROLE_AVATARS["Мужчина"];
             addMessage(avatar.greeting, false);
         }
     });
@@ -135,7 +135,7 @@ if (clearHistoryBtn) {
     clearHistoryBtn.addEventListener('click', async () => {
         await fetch(`/clear_history?user_id=${userId}`, { method: 'POST' });
         chatWindow.innerHTML = '';
-        const avatar = ROLE_AVATARS[currentRole] || ROLE_AVATARS["Муж"];
+        const avatar = ROLE_AVATARS[currentRole] || ROLE_AVATARS["Мужчина"];
         addMessage(avatar.greeting, false);
         addMessage('🗑️ История диалога очищена.', false);
     });
@@ -250,7 +250,7 @@ window.addEventListener('load', handleTelegramCallback);
 
 // Приветствие при загрузке
 if (chatWindow.children.length === 0) {
-    const avatar = ROLE_AVATARS[currentRole] || ROLE_AVATARS["Муж"];
+    const avatar = ROLE_AVATARS[currentRole] || ROLE_AVATARS["мужчина "];
     addMessage(avatar.greeting, false);
 }
 // Регистрация
@@ -297,4 +297,26 @@ document.getElementById('registerForm').addEventListener('submit', async (e) => 
     } catch (err) {
         alert('Ошибка соединения: ' + err.message);
     }
+    function checkAuth() {
+    const token = localStorage.getItem('token');
+    if (token) {
+        document.getElementById('login-link').style.display = 'none';
+        document.getElementById('profile-link').style.display = 'inline';
+        document.getElementById('logout-link').style.display = 'inline';
+        // Можно запросить /profile для вывода имени
+        fetch('/profile', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        })
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById('user-greeting').textContent = 'Привет, ' + data.username;
+        });
+    } else {
+        document.getElementById('login-link').style.display = 'inline';
+        document.getElementById('profile-link').style.display = 'none';
+        document.getElementById('logout-link').style.display = 'none';
+        document.getElementById('user-greeting').textContent = '';
+    }
+}
+document.addEventListener('DOMContentLoaded', checkAuth);
 });

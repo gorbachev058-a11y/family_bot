@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head><title>Личный кабинет</title></head>
+<body>
+    <h2>Личный кабинет</h2>
+    <div id="profile-info">Загрузка...</div>
+    <button id="logoutBtn">Выйти</button>
+    <a href="/">В чат</a>
+    <script>
+        const token = localStorage.getItem('token');
+        if (!token) window.location.href = '/login.html';
+        fetch('/profile', {
+            headers: { 'Authorization': 'Bearer ' + token }
+        })
+        .then(res => res.json())
+        .then(data => {
+            document.getElementById('profile-info').innerHTML = `
+                <p>Имя: ${data.username || 'Не указано'}</p>
+                <p>Email: ${data.email}</p>
+                <p>Премиум до: ${data.premium_until ? new Date(data.premium_until).toLocaleDateString() : 'нет'}</p>
+            `;
+        });
+        document.getElementById('logoutBtn').addEventListener('click', () => {
+            localStorage.removeItem('token');
+            localStorage.removeItem('userId');
+            window.location.href = '/';
+        });
+    </script>
+</body>
+</html>

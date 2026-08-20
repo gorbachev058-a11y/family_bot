@@ -168,12 +168,18 @@
             <h1>🧑‍⚕️ Доктор Хауз</h1>
             <p class="subtitle">Семейный психолог онлайн</p>
         </header>
+        <div id="auth-menu" style="position: absolute; top: 10px; right: 20px;">
+             <span id="user-greeting"></span>
+             <a id="login-link" href="/login.html">Войти</a>
+             <a id="profile-link" href="/profile.html" style="display:none;">Кабинет</a>
+             <a id="logout-link" href="#" style="display:none;">Выйти</a>
+        </div>
 
         <div class="role-selector">
             <span>Ваша роль:</span>
             <div class="role-buttons">
-                <button data-role="Муж" class="active">👨 Муж</button>
-                <button data-role="Жена">👩 Жена</button>
+                <button data-role="Мужчина" class="active">👨 Мужчина</button>
+                <button data-role="Женщина">👩 Женщина</button>
                 <button data-role="Пара">💑 Пара</button>
             </div>
         </div>
@@ -188,6 +194,7 @@
             <button id="telegramLoginBtn" class="action-btn">🔑 Войти через Telegram</button>
             <button id="registerBtn" class="action-btn">📝 Регистрация</button>
             <a href="/tests.html" class="action-btn">📋 Тесты</a>
+            <a href="/login.html">Войти</a>
         </div>
 
         <div class="chat-window" id="chatWindow">
@@ -239,8 +246,8 @@
                 <button type="submit" style="background:#e94560; color:white; padding:12px; border:none; border-radius:8px; cursor:pointer; font-weight:bold;">Зарегистрироваться</button>
                 </form>
                 <p style="margin-top:10px; font-size:0.9rem;">Уже есть аккаунт? <a href="#" id="switchToLogin" style="color:#4a8cff;">Войти</a></p>
-            </div>
         </div>
+    </div>
 
     <script src="/script.js"></script>
 </body>
