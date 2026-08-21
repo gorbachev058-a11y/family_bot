@@ -84,13 +84,13 @@
         document.querySelectorAll('.btn-pay[data-amount]').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const amount = parseFloat(btn.dataset.amount);
-                const description = `Premium подписка на ${btn.dataset.plan}`;
-                // Получаем user_id из localStorage (если есть)
+                const plan = btn.dataset.plan;
+                // Получаем user_id из localStorage
                 let user_id = localStorage.getItem('userId');
                 if (!user_id) {
-                    // Если нет, пробуем получить из сессии (можно запросить у пользователя или просто использовать 0)
-                    user_id = prompt('Введите ваш ID (или 0 для гостя):', '0');
-                    if (user_id === null) return;
+                    // Если нет, генерируем временный
+                    user_id = 'guest_' + Date.now();
+                    localStorage.setItem('userId', user_id);
                 }
                 try {
                     const response = await fetch('/create_premium_payment', {

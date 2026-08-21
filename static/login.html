@@ -1,14 +1,30 @@
 <!DOCTYPE html>
-<html>
-<head><title>Вход</title></head>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Вход — Доктор Хауз</title>
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        body { background: #1a1a2e; color: #e0e0e0; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: sans-serif; }
+        .container { background: #16213e; padding: 2rem; border-radius: 20px; max-width: 400px; width: 90%; }
+        h2 { text-align: center; color: #e94560; }
+        input { display: block; width: 100%; padding: 10px; margin: 10px 0; border-radius: 8px; border: none; background: #0f3460; color: white; }
+        button { background: #e94560; color: white; border: none; padding: 12px; border-radius: 8px; cursor: pointer; width: 100%; font-weight: bold; }
+        .link { display: block; text-align: center; margin-top: 15px; color: #4a8cff; text-decoration: none; }
+        .link:hover { text-decoration: underline; }
+    </style>
+</head>
 <body>
-    <h2>Вход в личный кабинет</h2>
-    <form id="loginForm">
-        <input type="email" id="email" placeholder="Email" required>
-        <input type="password" id="password" placeholder="Пароль" required>
-        <button type="submit">Войти</button>
-    </form>
-    <p>Нет аккаунта? <a href="/register.html">Зарегистрироваться</a></p>
+    <div class="container">
+        <h2>🔑 Вход</h2>
+        <form id="loginForm">
+            <input type="email" id="email" placeholder="Email" required>
+            <input type="password" id="password" placeholder="Пароль" required>
+            <button type="submit">Войти</button>
+        </form>
+        <a href="/" class="link" id="registerLink">📝 Зарегистрироваться</a>
+    </div>
     <script>
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -16,17 +32,23 @@
             const password = document.getElementById('password').value;
             const res = await fetch('/auth/login', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({email, password})
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
             });
+            const data = await res.json();
             if (res.ok) {
-                const data = await res.json();
-                localStorage.setItem('token', data.token);
+                localStorage.setItem('token', data.token || 'dummy');
                 localStorage.setItem('userId', data.user_id);
                 window.location.href = '/';
             } else {
-                alert('Неверный email или пароль');
+                alert('Ошибка: ' + (data.detail || 'Неверные данные'));
             }
+        });
+
+        // При клике на "Зарегистрироваться" – открываем модалку на главной странице
+        document.getElementById('registerLink').addEventListener('click', function(e) {
+            e.preventDefault();
+            window.location.href = '/?action=register';
         });
     </script>
 </body>

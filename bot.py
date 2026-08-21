@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -23,27 +24,29 @@ from states import (
     CompatibilityTest, ParentingStyleTest, SelfAcceptanceTest
 )
 from token_usage import init_db
-from auth_db import init_db as init_auth_db
+from auth_db import init_db as init_auth_db, hash_password
 import sqlite3
 from values_tests import router as values_router
 
-# Настройка логирования
+# ================== ДОБАВЛЯЕМ СОСТОЯНИЯ ДЛЯ РЕГИСТРАЦИИ ==================
+class RegisterStates(StatesGroup):
+    waiting_email = State()
+    waiting_password = State()
+
+# ================== НАСТРОЙКА ЛОГИРОВАНИЯ ==================
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Инициализация бота и диспетчера
+# ================== ИНИЦИАЛИЗАЦИЯ БОТА ==================
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# Подключаем роутеры тестов
 dp.include_router(test_router)
 dp.include_router(values_router)
 
-# Инициализация базы знаний
 kb = KnowledgeBase(KNOWLEDGE_BASE_PATH)
 
-# Клавиатура выбора роли
 role_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="Мужчина")],
@@ -55,30 +58,30 @@ role_keyboard = ReplyKeyboardMarkup(
     input_field_placeholder="Выберите вашу роль..."
 )
 
-# Установка меню команд
+# ================== УСТАНОВКА МЕНЮ КОМАНД ==================
 async def set_bot_command():
     commands = [
         types.BotCommand(command="start", description="🚀 Начать работу / выбрать роль"),
+        types.BotCommand(command="register", description="📝 Зарегистрироваться"),
+        types.BotCommand(command="tariffs", description="💎 Тарифы Premium"),
+        types.BotCommand(command="premium", description="⭐ Статус Premium"),
+        types.BotCommand(command="donate", description="❤️ Поддержать проект"),
         types.BotCommand(command="tests", description="📋 Психологические тесты"),
         types.BotCommand(command="changerole", description="🔄 Сменить роль"),
         types.BotCommand(command="help", description="❓ Помощь"),
         types.BotCommand(command="legal", description="📄 Юридическая информация"),
-        types.BotCommand(command="premium", description="⭐ Статус Premium"),
-        types.BotCommand(command="donate", description="❤️ Поддержать проект")
     ]
     await bot.set_my_commands(commands)
 
-# Функция для отправки длинных сообщений
+# ================== ФУНКЦИЯ ОТПРАВКИ ДЛИННЫХ СООБЩЕНИЙ ==================
 async def send_long_message(message: types.Message, text: str):
     MAX_LENGTH = 4000
-    logger.info(f"Длина ответа: {len(text)} символов")
     if len(text) <= MAX_LENGTH:
         await message.answer(text)
     else:
         parts = []
         current_part = ""
-        lines = text.split('\n')
-        for line in lines:
+        for line in text.split('\n'):
             if len(current_part) + len(line) + 1 <= MAX_LENGTH:
                 current_part += line + '\n'
             else:
@@ -88,13 +91,9 @@ async def send_long_message(message: types.Message, text: str):
         if current_part:
             parts.append(current_part)
         for i, part in enumerate(parts, 1):
-            if len(parts) > 1:
-                await message.answer(f"📄 Часть {i}/{len(parts)}:\n\n{part}")
-            else:
-                await message.answer(part)
+            await message.answer(f"📄 Часть {i}/{len(parts)}:\n\n{part}")
 
-# -------------------- Команды --------------------
-
+# ================== КОМАНДА /START ==================
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     init_auth_db()
@@ -109,7 +108,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         c.execute("INSERT INTO users (telegram_id, username) VALUES (?, ?)",
                   (telegram_id, message.from_user.full_name or ""))
         conn.commit()
-        trial_end = (datetime.now() + timedelta(days=10)).isoformat()  # 10 дней
+        trial_end = (datetime.now() + timedelta(days=10)).isoformat()
         c.execute("UPDATE users SET premium_until=? WHERE telegram_id=?", (trial_end, telegram_id))
         conn.commit()
     else:
@@ -117,7 +116,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
             trial_end = (datetime.now() + timedelta(days=10)).isoformat()
             c.execute("UPDATE users SET premium_until=? WHERE telegram_id=?", (trial_end, telegram_id))
             conn.commit()
-
     conn.close()
 
     welcome_text = (
@@ -125,51 +123,137 @@ async def cmd_start(message: types.Message, state: FSMContext):
         "Перед началом работы ознакомьтесь с важными документами:\n"
         "📄 <a href='https://doctorhauz.ru/docs/privacy_policy.html'>Политика конфиденциальности</a>\n"
         "📄 <a href='https://doctorhauz.ru/docs/user_agreement.html'>Пользовательское соглашение</a>\n"
-        "📄 <a href='https://doctorhauz.ru/docs/consent_form.html'>Согласие на обработку данных</a>\n\n"
-        "📄 <a href='https://doctorhauz.ru/docs/public_offer.html'>Публичная оферта</a>\n"
+        "📄 <a href='https://doctorhauz.ru/docs/consent_form.html'>Согласие на обработку данных</a>\n"
+        "📄 <a href='https://doctorhauz.ru/docs/public_offer.html'>Публичная оферта</a>\n\n"
         "Нажимая кнопку ниже, вы подтверждаете, что принимаете условия."
     )
     btn_accept = InlineKeyboardButton(text="✅ Принимаю условия", callback_data="accept_terms")
     markup = InlineKeyboardMarkup(inline_keyboard=[[btn_accept]])
     await message.answer(welcome_text, parse_mode="HTML", reply_markup=markup)
 
+# ================== КОМАНДА /REGISTER (НОВАЯ) ==================
+@dp.message(Command("register"))
+async def cmd_register(message: types.Message, state: FSMContext):
+    await message.answer("📝 Введите ваш email (например, user@example.com):")
+    await state.set_state(RegisterStates.waiting_email)
+
+@dp.message(RegisterStates.waiting_email)
+async def register_email(message: types.Message, state: FSMContext):
+    email = message.text.strip()
+    if "@" not in email or "." not in email:
+        await message.answer("❌ Некорректный email. Попробуйте ещё раз:")
+        return
+    await state.update_data(email=email)
+    await message.answer("Теперь введите пароль (минимум 6 символов):")
+    await state.set_state(RegisterStates.waiting_password)
+
+@dp.message(RegisterStates.waiting_password)
+async def register_password(message: types.Message, state: FSMContext):
+    password = message.text.strip()
+    if len(password) < 6:
+        await message.answer("❌ Пароль должен быть не короче 6 символов. Попробуйте ещё раз:")
+        return
+
+    data = await state.get_data()
+    email = data.get("email")
+    telegram_id = message.from_user.id
+    username = message.from_user.full_name or ""
+
+    conn = sqlite3.connect("data/users.db")
+    c = conn.cursor()
+
+    # Проверяем, не занят ли email
+    c.execute("SELECT id FROM users WHERE email=?", (email,))
+    if c.fetchone():
+        await message.answer("❌ Этот email уже зарегистрирован. Используйте другой email или войдите через /login (пока не реализовано).")
+        conn.close()
+        await state.clear()
+        return
+
+    # Проверяем, есть ли уже пользователь с таким telegram_id
+    c.execute("SELECT id, guest_id FROM users WHERE telegram_id=?", (telegram_id,))
+    existing = c.fetchone()
+    pwd_hash = hash_password(password)
+
+    if existing:
+        user_id, guest_id = existing
+        c.execute("UPDATE users SET email=?, password_hash=?, username=? WHERE id=?",
+                  (email, pwd_hash, username, user_id))
+        await message.answer("✅ Ваш аккаунт обновлён: email привязан к этому Telegram.")
+    else:
+        # Создаём нового пользователя
+        c.execute("INSERT INTO users (telegram_id, email, password_hash, username) VALUES (?, ?, ?, ?)",
+                  (telegram_id, email, pwd_hash, username))
+        user_id = c.lastrowid
+        # Выдаём триал 10 дней, если ещё нет
+        trial_end = (datetime.now() + timedelta(days=10)).isoformat()
+        c.execute("UPDATE users SET premium_until=? WHERE id=?", (trial_end, user_id))
+        await message.answer("✅ Регистрация успешна! Вы получили 10 дней Premium бесплатно.")
+
+    conn.commit()
+    conn.close()
+    await state.clear()
+
+# ================== КОМАНДА /TARIFFS (НОВАЯ) ==================
+@dp.message(Command("tariffs"))
+async def cmd_tariffs(message: types.Message):
+    text = (
+        "💎 **Тарифы Premium**\n\n"
+        "📅 1 месяц  — 490 ₽\n"
+        "📅 3 месяца — 1 290 ₽\n"
+        "📅 6 месяцев — 2 490 ₽\n"
+        "📅 12 месяцев — 3 990 ₽\n\n"
+        "🔹 Неограниченные консультации\n"
+        "🔹 Все психологические тесты\n"
+        "🔹 Дневник настроения\n"
+        "🔹 Советы эксперта\n\n"
+        "Оформить подписку можно на сайте:"
+    )
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton("💳 Перейти к оплате", url="https://doctorhauz.ru/tariffs.html")]
+    ])
+    await message.answer(text, reply_markup=markup, parse_mode="Markdown")
+
+# ================== КОМАНДА /PREMIUM ==================
 @dp.message(Command("premium"))
 async def premium_status(message: types.Message):
     telegram_id = message.from_user.id
     conn = sqlite3.connect("data/users.db")
     c = conn.cursor()
-    c.execute("SELECT premium_until FROM users WHERE telegram_id=?", (telegram_id,))
+    c.execute("SELECT premium_until, email FROM users WHERE telegram_id=?", (telegram_id,))
     row = c.fetchone()
     conn.close()
-    if row and row[0]:
-        until = datetime.fromisoformat(row[0])
-        if until > datetime.now():
-            text = f"✅ Ваш Premium активен до {until.strftime('%d.%m.%Y')}"
+
+    if row:
+        until, email = row
+        if until:
+            until_date = datetime.fromisoformat(until)
+            if until_date > datetime.now():
+                text = f"✅ Ваш Premium активен до {until_date.strftime('%d.%m.%Y')}\n"
+                text += f"📧 Email: {email or 'не указан'}"
+            else:
+                text = "⚠️ Срок Premium истёк. Продлите подписку."
         else:
-            text = "⚠️ Срок Premium истёк. Продлите подписку."
+            text = "У вас нет Premium. Оформите подписку."
     else:
-        text = "У вас нет Premium. Оформите подписку."
-    markup = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton("Оформить Premium", url="https://doctorhauz.ru/tariffs.html")
-    ]])
+        text = "Вы не зарегистрированы. Используйте /register для создания аккаунта."
+
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton("💳 Оформить Premium", url="https://doctorhauz.ru/tariffs.html")]
+    ])
     await message.answer(text, reply_markup=markup)
 
+# ================== КОМАНДА /DONATE ==================
 @dp.message(Command("donate"))
 async def donate(message: types.Message):
     markup = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("100 ₽", callback_data="donate_100")],
-        [InlineKeyboardButton("500 ₽", callback_data="donate_500")],
+        [InlineKeyboardButton("100 ₽", url="https://doctorhauz.ru/donate.html?amount=100")],
+        [InlineKeyboardButton("500 ₽", url="https://doctorhauz.ru/donate.html?amount=500")],
         [InlineKeyboardButton("Своя сумма", url="https://doctorhauz.ru/donate.html")]
     ])
-    await message.answer("❤️ Поддержите проект чашечкой кофе!", reply_markup=markup)
+    await message.answer("❤️ Поддержите проект. Любое пожертвование поможет нам развиваться.", reply_markup=markup)
 
-@dp.callback_query(F.data.startswith("donate_"))
-async def process_donate(call: types.CallbackQuery):
-    amount = int(call.data.split('_')[1])
-    url = f"https://doctorhauz.ru/donate.html?amount={amount}"
-    await call.message.answer(f"Перейдите по ссылке для оплаты: {url}")
-    await call.answer()
-
+# ================== ОБРАБОТКА ПРИНЯТИЯ УСЛОВИЙ ==================
 @dp.callback_query(F.data == "accept_terms")
 async def accept_terms(call: types.CallbackQuery, state: FSMContext):
     await call.message.edit_reply_markup()
@@ -179,6 +263,7 @@ async def accept_terms(call: types.CallbackQuery, state: FSMContext):
     )
     await state.set_state(UserRole.choosing_role)
 
+# ================== ОСТАЛЬНЫЕ КОМАНДЫ ==================
 @dp.message(Command("legal"))
 async def cmd_legal(message: types.Message):
     legal_text = (
@@ -194,11 +279,13 @@ async def cmd_help(message: types.Message):
     await message.answer(
         "🆘 **Помощь**\n"
         "/start - начать работу и выбрать роль\n"
+        "/register - зарегистрироваться (email+пароль)\n"
+        "/tariffs - тарифы Premium\n"
+        "/premium - статус подписки\n"
+        "/donate - поддержать проект\n"
         "/tests - психологические тесты\n"
         "/changerole - сменить роль\n"
         "/legal - юридическая информация\n"
-        "/premium - статус подписки\n"
-        "/donate - поддержать проект\n"
         "/help - это сообщение\n\n"
         "Вы можете задавать вопросы текстом или голосом. "
         "Я использую базу знаний по семейной психологии, "
@@ -228,8 +315,7 @@ async def cmd_tests(message: types.Message, state: FSMContext):
     )
     await state.set_state(TestStates.choosing_test)
 
-# -------------------- Обработка роли --------------------
-
+# ================== ОБРАБОТКА ВЫБОРА РОЛИ ==================
 @dp.message(UserRole.choosing_role)
 async def role_chosen(message: types.Message, state: FSMContext):
     role = message.text
@@ -267,8 +353,7 @@ async def role_chosen(message: types.Message, state: FSMContext):
 
     await message.answer(welcome_text, reply_markup=ReplyKeyboardRemove())
 
-# -------------------- Обработка вопросов --------------------
-
+# ================== ОБРАБОТКА ВОПРОСОВ ==================
 async def process_question(message: types.Message, state: FSMContext, query: str):
     user_data = await state.get_data()
     role = user_data.get('role', 'не указана')
@@ -336,8 +421,7 @@ async def handle_voice(message: types.Message, state: FSMContext):
         logger.error(f"Ошибка обработки голоса: {e}")
         await message.answer("❌ Произошла ошибка при обработке голосового сообщения. Попробуйте написать текст.")
 
-# -------------------- Обработка всех остальных сообщений --------------------
-
+# ================== ОБРАБОТКА ВСЕХ ОСТАЛЬНЫХ СООБЩЕНИЙ ==================
 @dp.message()
 async def handle_other_messages(message: types.Message, state: FSMContext):
     current_state = await state.get_state()
@@ -362,13 +446,12 @@ async def handle_other_messages(message: types.Message, state: FSMContext):
         return
     await message.answer("Используйте /start для начала работы")
 
-# -------------------- Запуск --------------------
-
+# ================== ЗАПУСК ==================
 async def main():
     logger.info("Бот запускается...")
     logger.info(f"База знаний загружена, {len(kb.chunks)} чанков")
-    init_db()  # для token_usage
-    init_auth_db()  # для пользователей и подписок
+    init_db()
+    init_auth_db()
     logger.info(f"YandexGPT: {'Включён' if YC_USE_GPT else 'Выключен'}")
     logger.info(f"Tavily поиск: {'Включён' if TAVILY_USE_SEARCH else 'Выключен'}")
     await set_bot_command()

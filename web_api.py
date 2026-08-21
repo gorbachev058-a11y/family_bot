@@ -487,14 +487,15 @@ def build_fallback_from_chunks(query: str, chunks: list, role: str, user_name: s
 # ========================
 async def run_async_generate(query: str, role: str, user_id: str) -> str:
     try:
-        # Извлекаем имя, если пользователь представился
         user_name = extract_and_store_name(user_id, query)
         if not user_name:
-            # Проверяем, не сохранено ли имя ранее
             user_name = user_names.get(user_id, '')
-
-        # Если имя есть, вставляем обращение в начало ответа
         greeting_prefix = f"{user_name}, " if user_name else ""
+
+        # Создаём query с именем, если оно есть
+        query_with_name = query
+        if user_name:
+            query_with_name = f"Меня зовут {user_name}. {query}"
 
         logger.info(f"Генерация для роли: {role}")
         context_chunks = knowledge_base.search(query, top_k=10)
@@ -505,7 +506,7 @@ async def run_async_generate(query: str, role: str, user_id: str) -> str:
             answer = build_fallback_from_chunks(query, context_chunks, role, user_name)
             add_to_history(user_id, query, answer)
             save_dialogue(user_id, role, query, answer)
-            return answer
+            return greeting_prefix + answer
 
         conversation_context = get_conversation_context(user_id, max_messages=6)
         enhanced_query = query_with_name
@@ -527,7 +528,6 @@ async def run_async_generate(query: str, role: str, user_id: str) -> str:
 
         add_to_history(user_id, query, answer)
         save_dialogue(user_id, role, query, answer)
-        return answer
 
         final_answer = greeting_prefix + answer
         return final_answer
@@ -742,18 +742,24 @@ async def get_test_questions(test_id: str):
             "Я часто критикую себя за недостатки.",
             "Я доволен своей внешностью."
         ],
-        "self_esteem": [
-            "Поставьте себе оценку от 1 до 10, как вы оцениваете свою уверенность в себе.",
-            "Поставьте оценку своей способности достигать целей.",
-            "Оцените свою социальную привлекательность.",
-            "Оцените, насколько вы довольны своей профессией.",
-            "Оцените свою способность справляться со стрессом."
-        ]
+         "self_esteem": {
+            "questions": [
+                "Поставьте себе оценку от 1 до 10, как вы оцениваете свою уверенность в себе.",
+                "Поставьте оценку своей способности достигать целей.",
+                "Оцените свою социальную привлекательность.",
+                "Оцените, насколько вы довольны своей профессией.",
+                "Оцените свою способность справляться со стрессом."
+            ],
+            "scale": "1-10"
+        }
     }
     if test_id not in questions_map:
         raise HTTPException(404, "Тест не найден")
-    return {"test_id": test_id, "questions": questions_map[test_id], "scale": "1-5"}
-
+    return {
+        "test_id": test_id,
+        "questions": questions_map[test_id]["questions"],
+        "scale": questions_map[test_id].get("scale", "1-5")
+    }
 @app.post("/tests/submit")
 async def submit_test(request: TestSubmitRequest):
     """Принимает ответы и возвращает результат"""

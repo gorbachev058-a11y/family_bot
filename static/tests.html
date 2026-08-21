@@ -23,6 +23,9 @@
         .btn-back { background: #0f3460; color: #ccc; border: none; padding: 10px 20px; border-radius: 20px; text-decoration: none; display: inline-block; margin-top: 10px; }
         .result-box { background: #0f3460; padding: 20px; border-radius: 12px; margin-top: 20px; white-space: pre-wrap; }
         .hidden { display: none; }
+        /* Стили для шкалы 1-10 */
+        .options-10 { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+        .options-10 label { display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 0.9em; }
     </style>
 </head>
 <body>
@@ -43,6 +46,7 @@
     <script>
         let currentTestId = null;
         let userAnswers = [];
+        let scale = 5; // по умолчанию
         const userId = localStorage.getItem('userId') || 'guest_' + Date.now();
 
         // Загружаем список тестов
@@ -73,20 +77,41 @@
             try {
                 const res = await fetch(`/tests/${testId}/questions`);
                 const data = await res.json();
+                if (!data.questions || data.questions.length === 0) {
+                    alert('Вопросы не найдены');
+                    return;
+                }
                 currentTestId = testId;
+                scale = data.scale === '1-10' ? 10 : 5; // определяем шкалу
+
                 document.getElementById('testList').classList.add('hidden');
                 document.getElementById('testContainer').classList.remove('hidden');
-                document.getElementById('testTitle').textContent = data.questions.length > 0 ? 'Тест' : 'Вопросы не найдены';
+                document.getElementById('testTitle').textContent = 'Тест';
+
                 const container = document.getElementById('questionsContainer');
-                container.innerHTML = '';
-                    userAnswers = new Array(data.questions.length).fill(null);
+                container.innerHTML = ''; // очищаем
+
+                // Добавляем пояснительный текст (один раз)
+                const scaleDesc = document.createElement('p');
+                scaleDesc.style.cssText = 'font-size:0.9em; color:#aaa; margin-bottom:1.5rem;';
+                if (scale === 10) {
+                    scaleDesc.innerHTML = 'Оцените каждое утверждение по шкале от 1 до 10:<br><span style="color:#ccc;">1 — совершенно не согласен, 10 — полностью согласен</span>';
+                } else {
+                    scaleDesc.innerHTML = 'Оцените каждое утверждение по шкале от 1 до 5:<br><span style="color:#ccc;">1 — совершенно не согласен, 5 — полностью согласен</span>';
+                }
+                container.appendChild(scaleDesc);
+
+                // Создаём массив ответов
+                userAnswers = new Array(data.questions.length).fill(null);
+
+                // Добавляем вопросы
                 data.questions.forEach((q, index) => {
                     const div = document.createElement('div');
                     div.className = 'question';
                     div.innerHTML = `
                         <p><strong>${index + 1}.</strong> ${q}</p>
                         <div class="options" data-index="${index}">
-                            ${[1,2,3,4,5].map(val => `
+                            ${Array.from({length: scale}, (_, i) => i+1).map(val => `
                                 <label>
                                     <input type="radio" name="q${index}" value="${val}">
                                     ${val}
@@ -94,13 +119,8 @@
                             `).join('')}
                         </div>
                     `;
-                    container.innerHTML = `
-                       <p style="font-size:0.9em; color:#aaa; margin-bottom:1.5rem;">
-                           Оцените каждое утверждение по шкале от 1 до 5:<br>
-                           <span style="color:#ccc;">1 — совершенно не согласен, 5 — полностью согласен</span>
-                       </p>
-                     `;
                     container.appendChild(div);
+
                     // Сохраняем выбранные ответы
                     const radios = div.querySelectorAll('input[type="radio"]');
                     radios.forEach(radio => {
@@ -109,6 +129,7 @@
                         });
                     });
                 });
+
                 document.getElementById('resultContainer').classList.add('hidden');
                 document.getElementById('submitTestBtn').style.display = 'block';
             } catch (e) {
@@ -119,7 +140,6 @@
 
         // Отправить ответы
         document.getElementById('submitTestBtn').addEventListener('click', async () => {
-            // Проверим, все ли вопросы отвечены
             const allAnswered = userAnswers.every(a => a !== null);
             if (!allAnswered) {
                 alert('Ответьте на все вопросы, прежде чем получить результат.');

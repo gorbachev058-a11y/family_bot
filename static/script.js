@@ -6,6 +6,14 @@ if (!userId) {
     localStorage.setItem('userId', userId);
 }
 
+// Обработка параметра инициализации//
+const urlParams = new URLSearchParams(window.location.search);
+if (urlParams.get('action') === 'register') {
+    const registerModal = document.getElementById('registerModal');
+    if (registerModal) registerModal.style.display = 'block';
+    window.history.replaceState({}, document.title, '/');
+}
+
 // Приведение ролей к единому формату
 const roleMapping = {
     'муж': 'Муж', 'мужчина': 'Мужчина', 'жена': 'Жена', 'женщина': 'Женщина', 'пара': 'Пара', 'ребёнок': 'Ребёнок'
