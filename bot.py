@@ -1,12 +1,14 @@
 import asyncio
 import logging
+import os
 import time
+import sqlite3
 from datetime import datetime, timedelta
+
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 
 from config import (
@@ -25,7 +27,6 @@ from states import (
 )
 from token_usage import init_db
 from auth_db import init_db as init_auth_db, hash_password
-import sqlite3
 from values_tests import router as values_router
 
 # ================== ДОБАВЛЯЕМ СОСТОЯНИЯ ДЛЯ РЕГИСТРАЦИИ ==================
@@ -39,7 +40,23 @@ logger = logging.getLogger(__name__)
 
 # ================== ИНИЦИАЛИЗАЦИЯ БОТА ==================
 bot = Bot(token=BOT_TOKEN)
-storage = MemoryStorage()
+
+# --- Условное создание хранилища FSM ---
+if os.getenv("ENV") == "production":
+    try:
+        from aiogram.fsm.storage.redis import RedisStorage, Redis
+        redis = Redis(host='localhost', port=6379, db=0, decode_responses=True)
+        storage = RedisStorage(redis)
+        logger.info("Используется RedisStorage")
+    except Exception as e:
+        logger.warning(f"Redis недоступен, переключение на MemoryStorage: {e}")
+        from aiogram.fsm.storage.memory import MemoryStorage
+        storage = MemoryStorage()
+else:
+    from aiogram.fsm.storage.memory import MemoryStorage
+    storage = MemoryStorage()
+    logger.info("Используется MemoryStorage (локальная разработка)")
+
 dp = Dispatcher(storage=storage)
 
 dp.include_router(test_router)
@@ -131,7 +148,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
     markup = InlineKeyboardMarkup(inline_keyboard=[[btn_accept]])
     await message.answer(welcome_text, parse_mode="HTML", reply_markup=markup)
 
-# ================== КОМАНДА /REGISTER (НОВАЯ) ==================
+# ================== КОМАНДА /REGISTER ==================
 @dp.message(Command("register"))
 async def cmd_register(message: types.Message, state: FSMContext):
     await message.answer("📝 Введите ваш email (например, user@example.com):")
@@ -162,15 +179,13 @@ async def register_password(message: types.Message, state: FSMContext):
     conn = sqlite3.connect("data/users.db")
     c = conn.cursor()
 
-    # Проверяем, не занят ли email
     c.execute("SELECT id FROM users WHERE email=?", (email,))
     if c.fetchone():
-        await message.answer("❌ Этот email уже зарегистрирован. Используйте другой email или войдите через /login (пока не реализовано).")
+        await message.answer("❌ Этот email уже зарегистрирован. Используйте другой email.")
         conn.close()
         await state.clear()
         return
 
-    # Проверяем, есть ли уже пользователь с таким telegram_id
     c.execute("SELECT id, guest_id FROM users WHERE telegram_id=?", (telegram_id,))
     existing = c.fetchone()
     pwd_hash = hash_password(password)
@@ -181,11 +196,9 @@ async def register_password(message: types.Message, state: FSMContext):
                   (email, pwd_hash, username, user_id))
         await message.answer("✅ Ваш аккаунт обновлён: email привязан к этому Telegram.")
     else:
-        # Создаём нового пользователя
         c.execute("INSERT INTO users (telegram_id, email, password_hash, username) VALUES (?, ?, ?, ?)",
                   (telegram_id, email, pwd_hash, username))
         user_id = c.lastrowid
-        # Выдаём триал 10 дней, если ещё нет
         trial_end = (datetime.now() + timedelta(days=10)).isoformat()
         c.execute("UPDATE users SET premium_until=? WHERE id=?", (trial_end, user_id))
         await message.answer("✅ Регистрация успешна! Вы получили 10 дней Premium бесплатно.")
@@ -194,7 +207,7 @@ async def register_password(message: types.Message, state: FSMContext):
     conn.close()
     await state.clear()
 
-# ================== КОМАНДА /TARIFFS (НОВАЯ) ==================
+# ================== КОМАНДА /TARIFFS ==================
 @dp.message(Command("tariffs"))
 async def cmd_tariffs(message: types.Message):
     text = (
@@ -315,7 +328,7 @@ async def cmd_tests(message: types.Message, state: FSMContext):
     )
     await state.set_state(TestStates.choosing_test)
 
-# ================== ОБРАБОТКА ВЫБОРА РОЛИ ==================
+# ================== ОБРАБОТКА ВЫБОРА РОЛИ (С АВАТАРОМ СОРАТНИКА) ==================
 @dp.message(UserRole.choosing_role)
 async def role_chosen(message: types.Message, state: FSMContext):
     role = message.text
@@ -329,7 +342,22 @@ async def role_chosen(message: types.Message, state: FSMContext):
     await state.update_data(role=role)
     await state.set_state(UserRole.chatting)
 
-    if role == "Ребёнок":
+    from config import ROLE_AVATARS
+    avatar = ROLE_AVATARS.get(role, {})
+
+    if role == "Мужчина":
+        greeting = avatar.get("greeting", "Привет. Я Соратник.")
+        welcome_text = (
+            f"👊 {greeting}\n\n"
+            "✅ Роль 'Мужчина' сохранена. Я, Доктор Хауз, готов помочь.\n"
+            "🤖 Отвечаю с использованием своей базы знаний и интернет-поиска.\n"
+            "📋 Команды:\n"
+            "/tests - психологические тесты\n"
+            "/changerole - сменить роль\n"
+            "/help - справка\n\n"
+            "Помните: я лишь помощник, мои советы не заменяют профессиональную помощь."
+        )
+    elif role == "Ребёнок":
         welcome_text = (
             f"✅ Привет! Ты выбрал роль '{role}'.\n\n"
             "Я — Доктор Хауз, и я буду отвечать простым и понятным языком. Ты можешь спросить меня о:\n"
@@ -382,7 +410,6 @@ async def process_question(message: types.Message, state: FSMContext, query: str
         )
         return
 
-    # Проверка на кризисные слова
     crisis_keywords = [
         "кризис", "насилие", "бить", "избивать", "страх", "суицид",
         "депрессия", "ненавижу", "умереть", "смерть", "покончить",
@@ -449,6 +476,8 @@ async def handle_other_messages(message: types.Message, state: FSMContext):
 # ================== ЗАПУСК ==================
 async def main():
     logger.info("Бот запускается...")
+    # alert bot – закомментировано, т.к. файл alert.py может отсутствовать
+    # init_alert_bot()
     logger.info(f"База знаний загружена, {len(kb.chunks)} чанков")
     init_db()
     init_auth_db()

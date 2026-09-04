@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import logging
+from pythonjsonlogger import jsonlogger
 import re
 from collections import defaultdict
 from typing import Optional, List, Dict
@@ -11,6 +12,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from datetime import datetime, timedelta
+from rate_limit import limiter, setup_rate_limiting
+from slowapi.errors import RateLimitExceeded
+from fastapi.responses import JSONResponse
+from alert import init_alert_bot, send_alert
 
 # ЮKassa
 from yookassa import Configuration, Payment
@@ -43,7 +48,11 @@ from forum_db import (
 )
 from kb_updater import add_chunk_to_kb
 
-# Импортируем функции для тестов (если они есть в test_handlers)
+# Архитектурное улучшение – создаём провайдер
+from yandex_gpt import YandexGPTProvider
+ai_provider = YandexGPTProvider()
+
+# Импортируем функции для тестов
 try:
     from test_handlers import (
         test_registry,
@@ -52,7 +61,6 @@ try:
         calculate_parenting_style,
         calculate_self_acceptance,
         calculate_self_esteem,
-        calculate_self_esteem as calculate_self_esteem_alias  # если имя другое
     )
     TEST_HANDLERS_AVAILABLE = True
 except ImportError:
@@ -60,10 +68,14 @@ except ImportError:
     logging.warning("test_handlers.py не найден, тесты будут работать в режиме заглушки")
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger()
+logHandler = logging.StreamHandler()
+formatter = jsonlogger.JsonFormatter('%(asctime)s %(levelname)s %(name)s %(message)s')
+logHandler.setFormatter(formatter)
+logger.addHandler(logHandler)
+logger.setLevel(logging.INFO)
 
-# Конфигурация ЮKassa из переменных окружения
+# Конфигурация ЮKassa
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "test")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY", "test")
 Configuration.account_id = YOOKASSA_SHOP_ID
@@ -81,23 +93,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+init_alert_bot()
+setup_rate_limiting(app)
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Слишком много запросов. Пожалуйста, подождите минуту."}
+    )
+
 # ========================
-# База знаний
+# База знаний и прочее (без изменений)
 # ========================
 KB_PATH = "data/family_advice.txt"
 knowledge_base = KnowledgeBase(KB_PATH)
 
-# ========================
-# Хранилище истории диалогов и имён
-# ========================
 conversation_history: Dict[str, List[Dict[str, str]]] = defaultdict(list)
 user_names: Dict[str, str] = {}
 MAX_HISTORY_LENGTH = 20
 proactive_shown: Dict[str, bool] = defaultdict(bool)
 
-# ========================
-# SQLite для долгосрочного хранения диалогов
-# ========================
 def init_dialogues_db():
     os.makedirs("data", exist_ok=True)
     conn = sqlite3.connect("data/dialogues.db")
@@ -126,16 +142,11 @@ def save_dialogue(user_id: str, role: str, question: str, answer: str):
 init_dialogues_db()
 init_forum_db()
 
-# ========================
-# Миграция: добавляем колонку guest_id в users, если её нет
-# ========================
 def migrate_users():
     conn = sqlite3.connect("data/users.db")
     c = conn.cursor()
-    # Проверяем, существует ли таблица users
     c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
     if c.fetchone():
-        # Таблица существует, проверяем колонку
         c.execute("PRAGMA table_info(users)")
         columns = [col[1] for col in c.fetchall()]
         if "guest_id" not in columns:
@@ -145,11 +156,9 @@ def migrate_users():
         logger.info("Таблица users ещё не создана, пропускаем миграцию")
     conn.commit()
     conn.close()
-# ========================
-# Бесплатный лимит сообщений для незарегистрированных
-# ========================
-FREE_MESSAGE_LIMIT = 10  # бесплатных сообщений
 
+# Бесплатный лимит
+FREE_MESSAGE_LIMIT = 10
 def init_free_db():
     os.makedirs("data", exist_ok=True)
     conn = sqlite3.connect("data/free_usage.db")
@@ -181,19 +190,15 @@ def increment_free_count(user_id: str):
     conn.close()
 
 async def check_free_limit(user_id: str) -> bool:
-    # Проверяем, есть ли у пользователя активная подписка (premium)
     conn = sqlite3.connect("data/users.db")
     c = conn.cursor()
-    # Проверяем по user_id (может быть как числовой id, так и текстовый guest_id)
     c.execute("SELECT premium_until FROM users WHERE id=? OR guest_id=?", (user_id, user_id))
     row = c.fetchone()
     conn.close()
     if row and row[0]:
         premium_until = datetime.fromisoformat(row[0])
         if premium_until > datetime.now():
-            return True  # есть активная подписка – безлимит
-
-    # Проверяем бесплатный лимит
+            return True
     count = get_free_count(user_id)
     if count < FREE_MESSAGE_LIMIT:
         increment_free_count(user_id)
@@ -206,10 +211,9 @@ init_db()
 migrate_users()
 
 # ========================
-# Авторизация через Telegram (Bearer JWT) – используется для защищённых эндпоинтов
+# Авторизация
 # ========================
 security = HTTPBearer()
-
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
     payload = decode_jwt(token)
@@ -224,12 +228,12 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
     username: str = ""
-    guest_id: Optional[str] = None  # добавлено для синхронизации
+    guest_id: Optional[str] = None
 
 class LoginRequest(BaseModel):
     email: str
     password: str
-    guest_id: Optional[str] = None  # можно тоже передавать для синхронизации
+    guest_id: Optional[str] = None
 
 class ChatRequest(BaseModel):
     message: str
@@ -264,38 +268,38 @@ class TestSubmitRequest(BaseModel):
     user_id: str
 
 # ========================
-# Эндпоинты регистрации и входа
+# Эндпоинты регистрации и входа (с лимитами)
 # ========================
 @app.post("/auth/register")
-async def register(request: RegisterRequest):
+@limiter.limit("5/minute")
+async def register(register_req: RegisterRequest, request: Request):
     init_db()
-    migrate_users()  # убедимся, что колонка есть
+    migrate_users()
     conn = sqlite3.connect("data/users.db")
     c = conn.cursor()
-    c.execute("SELECT id FROM users WHERE email=?", (request.email,))
+    c.execute("SELECT id FROM users WHERE email=?", (register_req.email,))
     if c.fetchone():
         conn.close()
         raise HTTPException(400, "Email уже используется")
-    pwd = hash_password(request.password)
+    pwd = hash_password(register_req.password)
     c.execute("INSERT INTO users (email, password_hash, username, guest_id) VALUES (?,?,?,?)",
-              (request.email, pwd, request.username, request.guest_id))
+              (register_req.email, pwd, register_req.username, register_req.guest_id))
     user_id = c.lastrowid
-    # Активация триального Premium на 30 дней
     trial_end = (datetime.now() + timedelta(days=10)).isoformat()
     c.execute("UPDATE users SET premium_until=? WHERE id=?", (trial_end, user_id))
     conn.commit()
     conn.close()
-    # Здесь можно было бы перенести диалоги из guest_id в новый user_id, но оставим для будущего
-    return {"user_id": user_id, "email": request.email}
+    return {"user_id": user_id, "email": register_req.email}
 
 @app.post("/auth/login")
-async def login(request: LoginRequest):
+@limiter.limit("10/minute")
+async def login(login_req: LoginRequest, request: Request):
     init_db()
     conn = sqlite3.connect("data/users.db")
     c = conn.cursor()
-    pwd = hash_password(request.password)
+    pwd = hash_password(login_req.password)
     c.execute("SELECT id, email, username, telegram_id FROM users WHERE email=? AND password_hash=?",
-              (request.email, pwd))
+              (login_req.email, pwd))
     row = c.fetchone()
     conn.close()
     if not row:
@@ -303,7 +307,8 @@ async def login(request: LoginRequest):
     return {"user_id": row[0], "email": row[1], "username": row[2], "telegram_id": row[3]}
 
 @app.post("/auth/telegram")
-async def auth_telegram(data: dict):
+@limiter.limit("5/minute")
+async def auth_telegram(data: dict, request: Request):
     verified = verify_telegram_auth(data.copy())
     if not verified:
         raise HTTPException(401, "Telegram auth failed")
@@ -324,65 +329,84 @@ async def auth_telegram(data: dict):
     return {"token": token, "user_id": user_id, "telegram_id": telegram_id}
 
 # ========================
-# Платежи (Premium и Донаты)
+# Платежи (ЮKassa) — с обработкой ошибок и оповещениями
 # ========================
 @app.post("/create_premium_payment")
+@limiter.limit("3/minute")
 async def create_premium_payment(request: Request):
-    data = await request.json()
-    user_id = data.get("user_id")
-    if not user_id:
-        raise HTTPException(400, "user_id обязателен")
-    conn = sqlite3.connect("data/users.db")
-    c = conn.cursor()
-    c.execute("SELECT id FROM users WHERE id=?", (user_id,))
-    if not c.fetchone():
+    try:
+        data = await request.json()
+        user_id = data.get("user_id")
+        if not user_id:
+            raise HTTPException(400, "user_id обязателен")
+        conn = sqlite3.connect("data/users.db")
+        c = conn.cursor()
+        c.execute("SELECT id FROM users WHERE id=?", (user_id,))
+        if not c.fetchone():
+            conn.close()
+            raise HTTPException(404, "Пользователь не найден")
         conn.close()
-        raise HTTPException(404, "Пользователь не найден")
-    conn.close()
 
-    payment = Payment.create({
-        "amount": {"value": "490.00", "currency": "RUB"},
-        "confirmation": {"type": "redirect", "return_url": "https://doctorhauz.ru/success.html"},
-        "capture": True,
-        "description": "Premium подписка на 1 месяц",
-        "metadata": {"user_id": user_id}
-    })
+        payment = Payment.create({
+            "amount": {"value": "490.00", "currency": "RUB"},
+            "confirmation": {"type": "redirect", "return_url": "https://doctorhauz.ru/success.html"},
+            "capture": True,
+            "description": "Premium подписка на 1 месяц",
+            "metadata": {"user_id": user_id}
+        })
 
-    conn = sqlite3.connect("data/users.db")
-    c = conn.cursor()
-    c.execute("INSERT INTO payments (user_id, amount, yookassa_id, status) VALUES (?, ?, ?, ?)",
-              (user_id, 490.00, payment.id, "pending"))
-    conn.commit()
-    conn.close()
-    return {"payment_id": payment.id, "confirmation_url": payment.confirmation.confirmation_url}
+        conn = sqlite3.connect("data/users.db")
+        c = conn.cursor()
+        c.execute("INSERT INTO payments (user_id, amount, yookassa_id, status) VALUES (?, ?, ?, ?)",
+                  (user_id, 490.00, payment.id, "pending"))
+        conn.commit()
+        conn.close()
+        return {"payment_id": payment.id, "confirmation_url": payment.confirmation.confirmation_url}
+    except Exception as e:
+        logger.error(f"Ошибка создания платежа Premium: {e}")
+        await send_alert(f"Ошибка создания платежа Premium: {e}")
+        raise HTTPException(500, str(e))
 
 @app.post("/yookassa_webhook")
 async def yookassa_webhook(request: Request):
-    data = await request.json()
-    if data.get("event") == "payment.succeeded":
-        payment_id = data["object"]["id"]
-        metadata = data["object"].get("metadata", {})
-        user_id = metadata.get("user_id")
-        if user_id:
-            activate_premium(int(user_id), days=30)
-            conn = sqlite3.connect("data/users.db")
-            c = conn.cursor()
-            c.execute("UPDATE payments SET status='succeeded' WHERE yookassa_id=?", (payment_id,))
-            conn.commit()
-            conn.close()
-    return {"status": "ok"}
+    try:
+        data = await request.json()
+        logger.info(f"Webhook received: {data}")
+        if data.get("event") == "payment.succeeded":
+            payment_id = data["object"]["id"]
+            metadata = data["object"].get("metadata", {})
+            user_id = metadata.get("user_id")
+            if user_id:
+                activate_premium(int(user_id), days=30)
+                conn = sqlite3.connect("data/users.db")
+                c = conn.cursor()
+                c.execute("UPDATE payments SET status='succeeded' WHERE yookassa_id=?", (payment_id,))
+                conn.commit()
+                conn.close()
+                await send_alert(f"✅ Платёж успешен: user_id={user_id}")
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"Ошибка вебхука: {e}")
+        await send_alert(f"Ошибка вебхука: {e}")
+        return {"status": "error"}
 
 @app.post("/create_donation")
-async def create_donation(request: DonateRequest):
-    amount = max(50.0, request.amount)
-    payment = Payment.create({
-        "amount": {"value": str(amount), "currency": "RUB"},
-        "confirmation": {"type": "redirect", "return_url": "https://doctorhauz.ru/thanks.html"},
-        "capture": True,
-        "description": "Добровольное пожертвование на развитие проекта",
-        "metadata": {"user_id": request.user_id or 0}
-    })
-    return {"confirmation_url": payment.confirmation.confirmation_url}
+@limiter.limit("3/minute")
+async def create_donation(donate_req: DonateRequest, request: Request):
+    try:
+        amount = max(50.0, donate_req.amount)
+        payment = Payment.create({
+            "amount": {"value": str(amount), "currency": "RUB"},
+            "confirmation": {"type": "redirect", "return_url": "https://doctorhauz.ru/thanks.html"},
+            "capture": True,
+            "description": "Добровольное пожертвование на развитие проекта",
+            "metadata": {"user_id": donate_req.user_id or 0}
+        })
+        return {"confirmation_url": payment.confirmation.confirmation_url}
+    except Exception as e:
+        logger.error(f"Ошибка создания доната: {e}")
+        await send_alert(f"Ошибка создания доната: {e}")
+        raise HTTPException(500, str(e))
 
 @app.get("/premium_status")
 async def premium_status(user_id: int):
@@ -399,7 +423,7 @@ async def premium_status(user_id: int):
     return {"active": False}
 
 # ========================
-# Функции для работы с историей диалогов
+# Функции для работы с историей диалогов (без изменений)
 # ========================
 def get_conversation_context(user_id: str, max_messages: int = 4) -> str:
     history = conversation_history.get(user_id, [])
@@ -426,7 +450,7 @@ def clear_history(user_id: str):
     return False
 
 # ========================
-# Функции для извлечения имени пользователя
+# Функции для имени
 # ========================
 def extract_and_store_name(user_id: str, message: str) -> str:
     stop_words = {"внимание", "привет", "здравствуй"}
@@ -448,7 +472,7 @@ def extract_and_store_name(user_id: str, message: str) -> str:
     return user_names.get(user_id, "")
 
 # ========================
-# Определение "опасных" тем
+# Опасные темы
 # ========================
 SENSITIVE_KEYWORDS = [
     "сво", "война", "военный", "боец", "птср", "насили", "бьёт", "побои",
@@ -476,14 +500,15 @@ def build_fallback_from_chunks(query: str, chunks: list, role: str, user_name: s
             clean = lines[1] if len(lines) > 1 else clean
         cleaned_chunks.append(f"• {clean}")
     answer = prefix + "\n\n".join(cleaned_chunks)
-    if role == "Мужчиа":
+    # ИСПРАВЛЕНА ОПЕЧАТКА:
+    if role == "Мужчина":
         answer += "\n\nЭто не всё, что можно сказать. Давай продолжим разговор — расскажи, что тебя сильнее всего цепляет из написанного?"
     else:
         answer += "\n\nЕсли нужно прояснить что-то из этого, просто спросите."
     return answer
 
 # ========================
-# Генерация ответа
+# Генерация ответа (с передачей ai_provider)
 # ========================
 async def run_async_generate(query: str, role: str, user_id: str) -> str:
     try:
@@ -492,7 +517,6 @@ async def run_async_generate(query: str, role: str, user_id: str) -> str:
             user_name = user_names.get(user_id, '')
         greeting_prefix = f"{user_name}, " if user_name else ""
 
-        # Создаём query с именем, если оно есть
         query_with_name = query
         if user_name:
             query_with_name = f"Меня зовут {user_name}. {query}"
@@ -515,11 +539,14 @@ async def run_async_generate(query: str, role: str, user_id: str) -> str:
             logger.info(f"Добавлен контекст истории для user_id={user_id}")
 
         user_id_int = hash(user_id) % 1000000
+
+        # Передаём глобальный ai_provider
         answer = await generate_answer(
             query=enhanced_query,
             context_chunks=context_chunks,
             role=role,
-            user_id=user_id_int
+            user_id=user_id_int,
+            ai_provider=ai_provider   # <-- добавлено
         )
 
         if is_refusal(answer):
@@ -539,21 +566,17 @@ async def run_async_generate(query: str, role: str, user_id: str) -> str:
 # ========================
 # Основные эндпоинты чата и дневника
 # ========================
-
 @app.post("/chat", response_model=ChatResponse)
-async def chat_endpoint(request: ChatRequest):
-    # user_id передаётся с фронтенда (генерируется в localStorage)
-    actual_user_id = request.user_id
+@limiter.limit("10/minute")
+async def chat_endpoint(chat_req: ChatRequest, request: Request):
+    actual_user_id = chat_req.user_id
     if not actual_user_id:
         actual_user_id = f"guest_{datetime.now().timestamp()}"
-
-    # Проверяем лимит бесплатных сообщений
     if not await check_free_limit(actual_user_id):
         return ChatResponse(
             response="🔒 Вы исчерпали бесплатный лимит сообщений. Зарегистрируйтесь, чтобы продолжить пользоваться Доктором Хаузом без ограничений! 👉 /register"
         )
-
-    answer = await run_async_generate(request.message, request.role, actual_user_id)
+    answer = await run_async_generate(chat_req.message, chat_req.role, actual_user_id)
     return ChatResponse(response=answer)
 
 @app.post("/clear_history")
@@ -612,7 +635,7 @@ async def get_dialogues(user_id: str, limit: int = 20):
     return [{"question": row["question"], "answer": row["answer"], "timestamp": row["timestamp"]} for row in rows]
 
 # ========================
-# Эндпоинты форума
+# Эндпоинты форума (без изменений)
 # ========================
 @app.get("/forum/topics")
 async def forum_topics(page: int = 1, per_page: int = 10):
@@ -695,12 +718,10 @@ async def add_comment_to_kb(comment_id: int, user_id: int, tags: List[str]):
     return {"status": "added", "message": "Чанк добавлен в базу знаний и индекс обновлён"}
 
 # ========================
-# НОВЫЕ ЭНДПОИНТЫ ДЛЯ ПСИХОЛОГИЧЕСКИХ ТЕСТОВ
+# Тесты (без изменений)
 # ========================
-
 @app.get("/tests/list")
 async def get_tests_list():
-    """Возвращает список доступных тестов"""
     tests = [
         {"id": "anxiety", "name": "Краткий опросник тревожности", "questions_count": 5},
         {"id": "compatibility", "name": "Совместимость пары", "questions_count": 5},
@@ -712,7 +733,6 @@ async def get_tests_list():
 
 @app.get("/tests/{test_id}/questions")
 async def get_test_questions(test_id: str):
-    """Возвращает вопросы для конкретного теста"""
     questions_map = {
         "anxiety": [
             "Я часто испытываю беспокойство без видимой причины.",
@@ -760,67 +780,42 @@ async def get_test_questions(test_id: str):
         "questions": questions_map[test_id]["questions"],
         "scale": questions_map[test_id].get("scale", "1-5")
     }
-@app.post("/tests/submit")
-async def submit_test(request: TestSubmitRequest):
-    """Принимает ответы и возвращает результат"""
-    if not TEST_HANDLERS_AVAILABLE:
-        # Заглушка: просто суммируем баллы и даём интерпретацию
-        total = sum(request.answers)
-        avg = total / len(request.answers)
-        if request.test_id == "anxiety":
-            if avg <= 2:
-                result = "Низкий уровень тревожности. Вы спокойны и уравновешены."
-            elif avg <= 3.5:
-                result = "Средний уровень тревожности. Рекомендуется обратить внимание на методы релаксации."
-            else:
-                result = "Высокий уровень тревожности. Рекомендуется обратиться к психологу."
-        elif request.test_id == "compatibility":
-            if avg >= 4:
-                result = "Высокая совместимость. У вас гармоничные отношения."
-            elif avg >= 3:
-                result = "Средняя совместимость. Есть зоны для роста."
-            else:
-                result = "Низкая совместимость. Рекомендуется работа над отношениями."
-        elif request.test_id == "parenting":
-            if avg >= 4:
-                result = "Демократичный стиль воспитания. Вы создаёте здоровую атмосферу."
-            elif avg >= 3:
-                result = "Смешанный стиль. Обратите внимание на баланс контроля и поддержки."
-            else:
-                result = "Авторитарный стиль. Возможно, стоит больше прислушиваться к ребёнку."
-        elif request.test_id == "self_acceptance":
-            if avg >= 4:
-                result = "Высокий уровень самопринятия. Вы уверены в себе."
-            elif avg >= 3:
-                result = "Средний уровень. Работайте над любовью к себе."
-            else:
-                result = "Низкий уровень самопринятия. Рекомендуется консультация психолога."
-        elif request.test_id == "self_esteem":
-            if avg >= 8:
-                result = "Высокая самооценка. Вы адекватно оцениваете свои возможности."
-            elif avg >= 5:
-                result = "Средняя самооценка. Есть над чем работать."
-            else:
-                result = "Низкая самооценка. Важно развивать уверенность."
-        else:
-            result = "Спасибо за прохождение теста!"
-        return {"result": result}
 
-    # Если test_handlers доступны, используем их
+@app.post("/tests/submit")
+@limiter.limit("5/minute")
+async def submit_test(testsub_req: TestSubmitRequest, request: Request):
+    if not TEST_HANDLERS_AVAILABLE:
+        total = sum(testsub_req.answers)
+        avg = total / len(testsub_req.answers)
+        if testsub_req.test_id == "anxiety":
+            if avg <= 2: result = "Низкий уровень тревожности. Вы спокойны и уравновешены."
+            elif avg <= 3.5: result = "Средний уровень тревожности. Рекомендуется обратить внимание на методы релаксации."
+            else: result = "Высокий уровень тревожности. Рекомендуется обратиться к психологу."
+        elif testsub_req.test_id == "compatibility":
+            if avg >= 4: result = "Высокая совместимость. У вас гармоничные отношения."
+            elif avg >= 3: result = "Средняя совместимость. Есть зоны для роста."
+            else: result = "Низкая совместимость. Рекомендуется работа над отношениями."
+        elif testsub_req.test_id == "parenting":
+            if avg >= 4: result = "Демократичный стиль воспитания. Вы создаёте здоровую атмосферу."
+            elif avg >= 3: result = "Смешанный стиль. Обратите внимание на баланс контроля и поддержки."
+            else: result = "Авторитарный стиль. Возможно, стоит больше прислушиваться к ребёнку."
+        elif testsub_req.test_id == "self_acceptance":
+            if avg >= 4: result = "Высокий уровень самопринятия. Вы уверены в себе."
+            elif avg >= 3: result = "Средний уровень. Работайте над любовью к себе."
+            else: result = "Низкий уровень самопринятия. Рекомендуется консультация психолога."
+        elif testsub_req.test_id == "self_esteem":
+            if avg >= 8: result = "Высокая самооценка. Вы адекватно оцениваете свои возможности."
+            elif avg >= 5: result = "Средняя самооценка. Есть над чем работать."
+            else: result = "Низкая самооценка. Важно развивать уверенность."
+        else: result = "Спасибо за прохождение теста!"
+        return {"result": result}
     try:
-        if request.test_id == "anxiety":
-            result = calculate_anxiety(request.answers)
-        elif request.test_id == "compatibility":
-            result = calculate_compatibility(request.answers)
-        elif request.test_id == "parenting":
-            result = calculate_parenting_style(request.answers)
-        elif request.test_id == "self_acceptance":
-            result = calculate_self_acceptance(request.answers)
-        elif request.test_id == "self_esteem":
-            result = calculate_self_esteem(request.answers)
-        else:
-            raise HTTPException(404, "Тест не найден")
-        # Можно сохранить результат в БД
+        if testsub_req.test_id == "anxiety": result = calculate_anxiety(testsub_req.answers)
+        elif testsub_req.test_id == "compatibility": result = calculate_compatibility(testsub_req.answers)
+        elif testsub_req.test_id == "parenting": result = calculate_parenting_style(testsub_req.answers)
+        elif testsub_req.test_id == "self_acceptance": result = calculate_self_acceptance(testsub_req.answers)
+        elif testsub_req.test_id == "self_esteem": result = calculate_self_esteem(testsub_req.answers)
+        else: raise HTTPException(404, "Тест не найден")
         return {"result": result}
     except Exception as e:
         logger.exception("Ошибка при расчёте теста")

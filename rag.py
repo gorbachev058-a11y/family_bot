@@ -1,32 +1,49 @@
 import asyncio
 import logging
+import os
 from typing import Optional, List, Dict
+import json
+import redis.asyncio as redis
 
 # Импортируем реальные функции из yandex_gpt
 from yandex_gpt import ask_yandex_gpt, get_system_prompt_for_role
+
+# Архитектурные улудшения
+from ai_provider import AIProvider
+from yandex_gpt import YandexGPTProvider
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Настройки Redis
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+REDIS_DB_CACHE = int(os.getenv("REDIS_DB_CACHE", 1))
+
+redis_cache = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB_CACHE, decode_responses=True)
+
+async def get_cache(key: str):
+    data = await redis_cache.get(key)
+    if data:
+        return json.loads(data)
+    return None
+
+async def set_cache(key: str, value: str, ttl: int = 86400):
+    await redis_cache.setex(key, ttl, json.dumps(value))
+
 # Глобальные переменные
 _searcher = None
 _conversation_history: Dict[str, List[Dict[str, str]]] = {}
-cache = {}
 
-# Эти переменные должны быть определены в config или передаваться
-TAVILY_USE_SEARCH = False  # Замените на ваше значение
-YC_USE_GPT = True  # Замените на ваше значение
-
+TAVILY_USE_SEARCH = False
+YC_USE_GPT = True
 
 # ============================================================
-# 1. ДЕТЕКТОР СОСТОЯНИЙ (НОВАЯ ВЕРСИЯ С WITNESS)
+# 1. ДЕТЕКТОР СОСТОЯНИЙ (без изменений)
 # ============================================================
-
 def detect_user_state(query: str, history: list) -> str:
     lower_q = query.lower()
-
-    # --- СНАЧАЛА ПРОВЕРЯЕМ НА СВИДЕТЕЛЯ НАСИЛИЯ ---
     witness_keywords = [
         "брат бьет", "друг бьет", "родственник бьет", "свидетель",
         "я хочу помочь", "знакомый бьет", "сват бьет", "зять бьет",
@@ -35,7 +52,6 @@ def detect_user_state(query: str, history: list) -> str:
     if any(kw in lower_q for kw in witness_keywords):
         return "witness"
 
-    # --- ПРОВЕРКА НА ПОВТОРЯЮЩИЕСЯ ВОПРОСЫ ---
     if len(history) >= 4:
         user_questions = [msg["content"] for msg in history if msg["role"] == "user"]
         if len(user_questions) >= 2:
@@ -45,47 +61,36 @@ def detect_user_state(query: str, history: list) -> str:
             if any(phrase in last_q for phrase in common_phrases) and any(phrase in prev_q for phrase in common_phrases):
                 return "repetitive"
 
-    # Остальные состояния...
     if len(history) < 2:
         return "new_dialog"
 
-    # Если в тексте много экспрессивных фраз
     venting_phrases = ["не могу", "устал", "достало", "бесит", "надоело", "как же", "почему", "за что"]
     if any(phrase in lower_q for phrase in venting_phrases) and "?" not in lower_q:
         return "venting"
 
-    # Если есть явные признаки гнева
     anger_phrases = ["зол", "бешен", "взбеси", "разозли", "ненавиж", "терпеть не могу"]
     if any(phrase in lower_q for phrase in anger_phrases):
         return "angry"
 
-    # Если есть слова растерянности
     confused_phrases = ["не знаю", "растерян", "не понимаю", "что делать", "как быть", "помогите"]
     if any(phrase in lower_q for phrase in confused_phrases):
         return "confused"
 
-    # Если в запросе есть вопросительное слово
     question_words = ["что", "как", "почему", "зачем", "когда", "где", "кто"]
     if any(qw in lower_q for qw in question_words) and "?" in query:
         return "asking"
 
-    # По умолчанию
     return "asking"
 
-
 def get_searcher():
-    """Возвращает экземпляр поисковика Tavily (если используется)."""
     global _searcher
     if _searcher is None and TAVILY_USE_SEARCH:
-        # Здесь должен быть импорт TavilySearcher
         # from tavily_search import TavilySearcher
         # _searcher = TavilySearcher()
         pass
     return _searcher
 
-
 def is_refusal(text: str) -> bool:
-    """Проверяет, является ли ответ отказом от YandexGPT."""
     refusal_phrases = [
         "не могу обсуждать", "не могу ответить", "не могу дать ответ",
         "извините, я не могу", "не в моей компетенции", "не могу комментировать",
@@ -95,47 +100,32 @@ def is_refusal(text: str) -> bool:
     lower_text = text.lower()
     return any(phrase in lower_text for phrase in refusal_phrases)
 
-
 # ============================================================
-# 2. FALLBACK С РАЗДЕЛЕНИЕМ ДЛЯ СВИДЕТЕЛЯ И ЖЕРТВЫ (НОВАЯ ВЕРСИЯ)
+# 2. FALLBACK (без изменений)
 # ============================================================
-
 def build_fallback_answer(query: str, context_chunks: list, role: str) -> str:
-    """
-    Формирует ответ из базы знаний, если YandexGPT отказался отвечать.
-    Теперь с разделением для свидетеля и жертвы.
-    """
-    # Проверяем ключевые слова для добавления телефонов доверия
     needs_help = any(kw in query.lower() for kw in [
         "насили", "бьёт", "агресс", "побои", "рукоприклад", "угрожа",
         "пьёт", "алкоголь", "не разговаривает", "птср", "сво", "ветеран"
     ])
-
-    # Определяем, свидетель ли пользователь
     is_witness = any(kw in query.lower() for kw in [
         "брат", "друг", "родственник", "свидетель", "я хочу помочь",
         "знакомый", "сват", "зять", "шурин", "деверь", "свояк",
         "муж сестры", "родной брат"
     ])
-
     answer = ""
-
-    # Если есть чанки из базы знаний — добавляем их
     if context_chunks:
         answer = (
             "Я не могу самостоятельно дать ответ на этот вопрос, но вот информация из моей базы знаний, "
             "которая может помочь:\n\n"
         )
         for i, chunk in enumerate(context_chunks[:3], 1):
-            # Убираем теги #... из начала для читаемости
             clean_chunk = chunk
             if chunk.startswith('#'):
                 lines = chunk.split('\n', 1)
                 if len(lines) > 1:
                     clean_chunk = lines[1]
             answer += f"**{i}.** {clean_chunk}\n\n"
-
-    # --- БЛОК ПОМОЩИ ДЛЯ СВИДЕТЕЛЯ ИЛИ ЖЕРТВЫ ---
     if needs_help:
         if is_witness:
             answer += (
@@ -161,7 +151,6 @@ def build_fallback_answer(query: str, context_chunks: list, role: str) -> str:
                 "- Центр социальной поддержки семьи (по месту жительства)\n\n"
                 "Помните: насилие недопустимо, вы не одни. ✅"
             )
-            # Если тема — самоанализ или отношения, добавим готовые упражнения
             if any(kw in query.lower() for kw in ["разобраться в себе", "понять себя", "что делать"]):
                 exercises = (
                     "\n\n**Практические упражнения для самоанализа:**\n"
@@ -182,54 +171,39 @@ def build_fallback_answer(query: str, context_chunks: list, role: str) -> str:
             )
         return answer
 
-
 def get_conversation_history_for_detector(user_id: str = "default", max_messages: int = 4) -> list:
-    """
-    Возвращает последние сообщения диалога для детектора состояния.
-    """
     return _conversation_history.get(user_id, [])[-max_messages:]
 
-
 def add_to_detector_history(user_id: str, role: str, content: str):
-    """Добавляет сообщение в историю для детектора."""
     if user_id not in _conversation_history:
         _conversation_history[user_id] = []
     _conversation_history[user_id].append({"role": role, "content": content})
-    # Ограничиваем длину истории
     if len(_conversation_history[user_id]) > 20:
         _conversation_history[user_id] = _conversation_history[user_id][-20:]
 
-
 # ============================================================
-# 3. ОСНОВНАЯ ФУНКЦИЯ GENERATE_ANSWER (С НОВОЙ ИНСТРУКЦИЕЙ ДЛЯ WITNESS)
+# 3. ОСНОВНАЯ ФУНКЦИЯ GENERATE_ANSWER (ИСПРАВЛЕНА)
 # ============================================================
-
-async def generate_answer(query: str, context_chunks: list, role: str, user_id: int = None) -> str:
-    """Генерирует ответ с использованием YandexGPT и поиска Tavily, с fallback при отказе."""
+async def generate_answer(query: str, context_chunks: list, role: str, user_id: int = None, ai_provider: Optional[AIProvider] = None) -> str:
     # Проверка кеша
-    cache_key = (query, role)
-    if cache_key in cache:
-        logger.info(f"✅ Ответ взят из кеша для запроса: {query[:50]}...")
-        return cache[cache_key]
+    cache_key = f"{query}:{role}"
+    cached = await get_cache(cache_key)
+    if cached:
+        logger.info(f"✅ Ответ взят из Redis-кеша для запроса: {query[:50]}...")
+        return cached
 
-    # --- Детектор состояния и антизацикливание ---
+    # --- Детектор состояния ---
     user_id_str = str(user_id) if user_id else "default"
-
-    # Получаем историю диалога для этого пользователя
     history = get_conversation_history_for_detector(user_id_str)
-
-    # Определяем состояние пользователя (НОВАЯ ВЕРСИЯ С WITNESS)
     state = detect_user_state(query, history)
     logger.info(f"Состояние пользователя: {state}")
 
-    # Формируем инструкцию для модели в зависимости от состояния
     state_instruction = ""
-
     if state == "venting":
         state_instruction = (
             "[ВАЖНО] Пользователь сейчас выплёскивает эмоции. "
             "Не задавай вопросов, не перебивай, не советуй. Просто выслушай и покажи, что ты рядом. "
-            "Используй фразы: «Я тебя слышу», «Это действительно тяжело», «Расскажи, что чувствуешь»."
+            "Используй фразы: «Я тебя слышу», «Это действительно тяжело», «Расскажи, что чувствуёшь»."
         )
     elif state == "repetitive":
         state_instruction = (
@@ -253,7 +227,6 @@ async def generate_answer(query: str, context_chunks: list, role: str, user_id: 
             "[ВАЖНО] Это начало диалога. Поприветствуй пользователя и спроси, что привело его сюда. "
             "Не используй имя, если его ещё не назвали."
         )
-    # --- НОВОЕ СОСТОЯНИЕ: СВИДЕТЕЛЬ ---
     elif state == "witness":
         state_instruction = (
             "[ВАЖНО] Пользователь — свидетель насилия в чужой семье. "
@@ -264,9 +237,8 @@ async def generate_answer(query: str, context_chunks: list, role: str, user_id: 
             "Не обесценивай ситуацию фразами «всё будет хорошо». "
             "Помни: твоя задача — не спасать агрессора, а помогать жертве и свидетелю сохранить безопасность."
         )
-    # Для "asking" инструкция не добавляется
 
-    # --- АНТИЗАЦИКЛИВАНИЕ (проверка на повторяющиеся вопросы) ---
+    # Антизацикливание
     if len(history) >= 2:
         last_bot_msg = None
         second_last_bot_msg = None
@@ -277,42 +249,26 @@ async def generate_answer(query: str, context_chunks: list, role: str, user_id: 
                 elif second_last_bot_msg is None:
                     second_last_bot_msg = msg["content"]
                     break
-
         if last_bot_msg and second_last_bot_msg:
-            # Проверка на повторение вопроса про имя
             if "Как мне к вам обращаться?" in last_bot_msg and "Как мне к вам обращаться?" in second_last_bot_msg:
-                state_instruction += (
-                    "\n[ПРЕДУПРЕЖДЕНИЕ] Ты уже дважды спросил имя. НЕ спрашивай его снова. Просто продолжай диалог."
-                )
-            # Проверка на повторение уточняющих вопросов
+                state_instruction += "\n[ПРЕДУПРЕЖДЕНИЕ] Ты уже дважды спросил имя. НЕ спрашивай его снова. Просто продолжай диалог."
             if any(phrase in last_bot_msg for phrase in ["расскажи", "опиши", "как давно", "сколько времени"]) and \
-                    any(phrase in second_last_bot_msg for phrase in
-                        ["расскажи", "опиши", "как давно", "сколько времени"]):
-                state_instruction += (
-                    "\n[ПРЕДУПРЕЖДЕНИЕ] Ты задаёшь похожие вопросы второй раз. НЕ переспрашивай. Сразу дай ответ по существу."
-                )
-            # Новая проверка: если дважды спросили «что чувствуешь»
+                    any(phrase in second_last_bot_msg for phrase in ["расскажи", "опиши", "как давно", "сколько времени"]):
+                state_instruction += "\n[ПРЕДУПРЕЖДЕНИЕ] Ты задаёшь похожие вопросы второй раз. НЕ переспрашивай. Сразу дай ответ по существу."
             if "чувствуешь" in last_bot_msg and "чувствуешь" in second_last_bot_msg:
-                state_instruction += (
-                    "\n[ПРЕДУПРЕЖДЕНИЕ] Ты уже дважды спросил о чувствах. НЕ переспрашивай. Дай конкретный совет или поддержку без вопросов."
-                )
+                state_instruction += "\n[ПРЕДУПРЕЖДЕНИЕ] Ты уже дважды спросил о чувствах. НЕ переспрашивай. Дай конкретный совет или поддержку без вопросов."
 
-    # Добавляем инструкцию в запрос
     if state_instruction:
         enhanced_query = f"{state_instruction}\n\nЗапрос пользователя: {query}"
     else:
         enhanced_query = query
 
-    # Добавляем сообщение пользователя в историю детектора
     add_to_detector_history(user_id_str, "user", query)
-    # --- Конец детектора ---
 
     # Если YandexGPT выключен — только база знаний
     if not YC_USE_GPT:
-        # Режим без ИИ (только база знаний)
         if not context_chunks:
             return "К сожалению, в моей базе знаний пока нет ответа на этот вопрос."
-
         response_parts = [f"📚 Вот что я нашёл по вашему вопросу (роль: {role}):\n"]
         for i, chunk in enumerate(context_chunks, 1):
             clean_chunk = chunk
@@ -328,27 +284,21 @@ async def generate_answer(query: str, context_chunks: list, role: str, user_id: 
 
     # --- Режим с ИИ ---
     try:
-        # Получаем системный промпт для роли
         system_prompt = get_system_prompt_for_role(role)
-
-        # Если включён Tavily, выполняем поиск
         search_results_text = None
         if TAVILY_USE_SEARCH:
             searcher = get_searcher()
             if searcher:
                 logger.info("Запуск Tavily поиска...")
-                # Здесь должен быть реальный вызов поиска
-                # search_results = await searcher.search(query)
-                # if search_results:
-                #     search_results_text = searcher.format_results_for_prompt(search_results)
-                #     logger.info("Tavily поиск завершён успешно")
-                # else:
-                #     logger.warning("Tavily поиск не дал результатов")
-                pass
+                # тут реальный вызов
+
+        # Если провайдер не передан, создаём экземпляр YandexGPTProvider
+        if ai_provider is None:
+            ai_provider = YandexGPTProvider()
 
         logger.info("Отправка запроса в YandexGPT...")
-        answer = await ask_yandex_gpt(
-            user_message=enhanced_query,
+        answer = await ai_provider.generate_response(
+            prompt=enhanced_query,
             system_prompt=system_prompt,
             temperature=0.7,
             max_tokens=2500,
@@ -357,16 +307,12 @@ async def generate_answer(query: str, context_chunks: list, role: str, user_id: 
             role=role
         )
 
-        # Добавляем ответ бота в историю детектора
         add_to_detector_history(user_id_str, "assistant", answer)
 
-        # ПРОВЕРКА НА ОТКАЗ
         if is_refusal(answer):
             logger.warning(f"YandexGPT вернул отказ: {answer[:100]}")
-            # Используем fallback из базы знаний
             fallback = build_fallback_answer(query, context_chunks, role)
-            # Кешируем fallback
-            cache[cache_key] = fallback
+            await set_cache(cache_key, fallback, 86400)
             return fallback
 
         if answer.startswith(("Ошибка", "Извините", "Произошла ошибка")):
@@ -374,7 +320,7 @@ async def generate_answer(query: str, context_chunks: list, role: str, user_id: 
         else:
             logger.info("YandexGPT ответил успешно")
 
-        cache[cache_key] = answer
+        await set_cache(cache_key, answer, 86400)
         return answer
 
     except asyncio.TimeoutError:

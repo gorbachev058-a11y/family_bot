@@ -6,7 +6,13 @@ import jwt
 from datetime import datetime, timedelta
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-JWT_SECRET = os.getenv("JWT_SECRET_KEY", "change_me_in_production")
+# Загружаем секрет из переменной окружения, если нет — генерируем при старте (но лучше всегда задавать)
+JWT_SECRET = os.getenv("JWT_SECRET")
+if not JWT_SECRET:
+    # Для разработки можно сгенерировать, но в production обязательно задать в .env
+    import secrets
+    JWT_SECRET = secrets.token_hex(32)
+    # ВАЖНО: В production не полагайтесь на автоматическую генерацию, установите фиксированное значение в .env
 
 def verify_telegram_auth(data: dict):
     if not data.get('hash'):

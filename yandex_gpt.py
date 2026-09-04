@@ -7,6 +7,7 @@ from config import (
     YANDEX_API_KEY, YANDEX_FOLDER_ID, YC_MODEL,
     USE_PROXY, HTTP_PROXY, HTTPS_PROXY
 )
+from ai_provider import AIProvider
 
 logger = logging.getLogger(__name__)
 
@@ -158,3 +159,17 @@ def get_system_prompt_for_role(role: str = "Мужчина") -> str:
 
     # Для остальных ролей (Женщина, Пара, Ребёнок) добавляем общие правила
     return personal_prompt + "\n\n" + COMMON_RULES
+
+class YandexGPTProvider(AIProvider):
+    """Реализация AIProvider для YandexGPT."""
+    async def generate_response(self, prompt: str, system_prompt: str = None, **kwargs) -> str:
+        # Используем существующую функцию ask_yandex_gpt
+        return await ask_yandex_gpt(
+            user_message=prompt,
+            system_prompt=system_prompt,
+            temperature=kwargs.get('temperature', 0.7),
+            max_tokens=kwargs.get('max_tokens', 2000),
+            search_results=kwargs.get('search_results'),
+            user_id=kwargs.get('user_id'),
+            role=kwargs.get('role')
+        )

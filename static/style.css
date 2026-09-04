@@ -1,194 +1,183 @@
+/* ===== ОБЩИЕ СТИЛИ ===== */
 * {
-    box-sizing: border-box;
     margin: 0;
     padding: 0;
+    box-sizing: border-box;
 }
 
-body {
-    font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    background: #e9f0f5;
-    height: 100vh;
-    display: flex;
-    justify-content: center;
-    align-items: center;
+html, body {
+    height: 100%;
+    overflow: hidden;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: #1a1a2e;
+    color: #e0e0e0;
 }
 
 .app-container {
-    max-width: 800px;
-    width: 90%;
-    height: 90vh;
-    background: white;
-    border-radius: 24px;
-    box-shadow: 0 8px 20px rgba(0,0,0,0.1);
     display: flex;
     flex-direction: column;
+    height: 100vh;
+    max-width: 600px;
+    margin: 0 auto;
+    background: #16213e;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.6);
     overflow: hidden;
 }
 
+/* ===== ШАПКА ===== */
 header {
-    background: #2c3e66;
-    color: white;
-    padding: 1rem;
     text-align: center;
+    padding: 15px 10px 10px;
+    background: #0f3460;
+    flex-shrink: 0;
 }
-
 header h1 {
-    font-size: 1.6rem;
-    font-weight: 500;
+    font-size: 1.6em;
+    background: linear-gradient(90deg, #00d4aa, #4a8cff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
 }
+.subtitle { color: #aaa; font-size: 0.9em; }
 
-.subtitle {
-    font-size: 0.8rem;
-    opacity: 0.9;
-}
-
+/* ===== МЕНЮ РОЛЕЙ ===== */
 .role-selector {
-    background: #f4f7fc;
-    padding: 0.8rem;
     display: flex;
-    justify-content: space-between;
     align-items: center;
     flex-wrap: wrap;
-    gap: 0.5rem;
-    border-bottom: 1px solid #ddd;
+    gap: 6px;
+    padding: 8px 10px;
+    background: #0f3460;
+    flex-shrink: 0;
+    border-bottom: 1px solid #1a1a2e;
 }
-
+.role-selector span { color: #ccc; font-size: 0.9em; }
 .role-buttons {
     display: flex;
-    gap: 0.5rem;
     flex-wrap: wrap;
+    gap: 5px;
 }
-
 .role-buttons button {
-    background: #e2e8f0;
-    border: none;
-    padding: 0.4rem 0.8rem;
-    border-radius: 40px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    border: 1px solid #e94560;
+    background: transparent;
+    color: #e94560;
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: 12px;
     transition: all 0.2s;
 }
-
 .role-buttons button.active {
-    background: #2c3e66;
+    background: #e94560;
     color: white;
 }
 
+/* ===== ВЕРХНЕЕ МЕНЮ (кнопки действий) ===== */
 .action-buttons {
     display: flex;
-    gap: 0.5rem;
-    padding: 0.5rem;
-    background: #f4f7fc;
-    border-bottom: 1px solid #ddd;
     flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 10px;
+    background: #0f3460;
+    flex-shrink: 0;
+    border-bottom: 1px solid #1a1a2e;
 }
-
-.action-btn {
-    background: #5a6e8a;
-    color: white;
-    border: none;
-    padding: 0.4rem 0.8rem;
+.action-btn, .forum-link, .tariff-link, .donate-link {
+    padding: 4px 10px;
     border-radius: 20px;
+    border: none;
     cursor: pointer;
-    font-size: 0.85rem;
-    transition: 0.2s;
+    font-size: 12px;
+    background: #1a1a2e;
+    color: #ccc;
+    text-decoration: none;
+    display: inline-block;
+    transition: background 0.2s;
+}
+.action-btn:hover, .forum-link:hover, .tariff-link:hover, .donate-link:hover {
+    background: #e94560;
+    color: white;
 }
 
-.action-btn:hover {
-    background: #2c3e66;
-}
-
-.clear-btn {
-    background: #e74c3c;
-}
-
-.clear-btn:hover {
-    background: #c0392b;
-}
-
+/* ===== ОКНО ЧАТА ===== */
 .chat-window {
-    flex: 1;
+    flex: 1 1 auto;
     overflow-y: auto;
-    padding: 1rem;
+    padding: 15px;
     display: flex;
     flex-direction: column;
-    gap: 0.8rem;
-    background: #ffffff;
+    gap: 10px;
+    background: #1a1a2e;
+    /* минимальная высота, чтобы чат не схлопывался */
+    min-height: 0;
 }
 
 .message {
     max-width: 80%;
-    padding: 0.7rem 1rem;
+    padding: 10px 14px;
     border-radius: 18px;
     line-height: 1.4;
-    font-size: 0.95rem;
     word-wrap: break-word;
+    font-size: 0.95em;
 }
-
 .user-message {
     align-self: flex-end;
-    background: #2c3e66;
+    background: #e94560;
     color: white;
     border-bottom-right-radius: 4px;
 }
-
 .bot-message {
     align-self: flex-start;
-    background: #f0f2f5;
-    color: #1e2a3a;
+    background: #0f3460;
+    color: #eee;
     border-bottom-left-radius: 4px;
 }
 
+/* ===== ПОЛЕ ВВОДА ===== */
 .input-area {
     display: flex;
-    padding: 0.8rem;
-    gap: 0.5rem;
-    border-top: 1px solid #ddd;
-    background: white;
+    padding: 10px 12px;
+    background: #1a1a2e;
+    border-top: 1px solid #0f3460;
+    flex-shrink: 0;
 }
-
-#messageInput {
+.input-area input {
     flex: 1;
-    padding: 0.7rem;
-    border: 1px solid #ccc;
-    border-radius: 40px;
-    font-size: 1rem;
+    padding: 10px 14px;
+    border-radius: 25px;
+    border: none;
+    background: #0f3460;
+    color: white;
+    font-size: 16px;
     outline: none;
 }
-
-#messageInput:focus {
-    border-color: #2c3e66;
-}
-
-#sendBtn, .voice-btn {
-    background: #2c3e66;
-    color: white;
+.input-area button {
+    margin-left: 8px;
+    padding: 10px 18px;
+    border-radius: 25px;
     border: none;
-    padding: 0 1rem;
-    border-radius: 40px;
+    background: #e94560;
+    color: white;
+    font-weight: bold;
     cursor: pointer;
-    font-size: 1rem;
-    transition: 0.2s;
+    font-size: 16px;
 }
-
-#sendBtn:hover, .voice-btn:hover {
-    background: #1f2c4a;
-}
-
 .voice-btn {
-    background: #5a6e8a;
-    font-size: 1.2rem;
-    padding: 0 0.8rem;
+    background: #0f3460;
+    border: none;
+    color: #ccc;
+    font-size: 1.2em;
+    padding: 0 10px;
+    cursor: pointer;
 }
-
 .status {
-    font-size: 0.75rem;
     text-align: center;
-    color: #666;
-    padding: 0.2rem;
+    font-size: 0.8em;
+    color: #888;
+    padding: 4px;
+    flex-shrink: 0;
 }
 
-/* Модальное окно */
+/* ===== МОДАЛЬНЫЕ ОКНА ===== */
 .modal {
     display: none;
     position: fixed;
@@ -197,82 +186,85 @@ header h1 {
     top: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0,0,0,0.5);
+    background: rgba(0,0,0,0.7);
 }
-
 .modal-content {
-    background: white;
-    margin: 15% auto;
+    background: #16213e;
+    margin: 10% auto;
     padding: 20px;
+    border-radius: 12px;
     width: 90%;
     max-width: 400px;
-    border-radius: 16px;
     text-align: center;
 }
+.close { color: #aaa; float: right; font-size: 28px; cursor: pointer; }
+.mood-rating { font-size: 2em; }
 
-.close {
-    float: right;
-    font-size: 28px;
-    cursor: pointer;
+/* ===== ПОДВАЛ ===== */
+footer {
+    text-align: center;
+    padding: 10px;
+    background: #0f3460;
+    color: #aaa;
+    font-size: 0.7em;
+    flex-shrink: 0;
 }
+footer a { color: #ccc; margin: 0 8px; text-decoration: none; }
+footer a:hover { text-decoration: underline; }
 
-.mood-rating {
-    display: flex;
-    justify-content: space-around;
-    font-size: 2rem;
-    margin: 1rem 0;
-    cursor: pointer;
-}
+/* ===== МОБИЛЬНАЯ АДАПТАЦИЯ ===== */
+@media (max-width: 600px) {
+    header { padding: 10px 8px 6px; }
+    header h1 { font-size: 1.2em; }
+    .subtitle { font-size: 0.7em; }
 
-.mood-rating span {
-    padding: 0.5rem;
-    transition: 0.2s;
-    cursor: pointer;
-    border-radius: 50%;
-}
-
-.mood-rating span.selected {
-    background-color: #2c3e66;
-    color: white;
-    transform: scale(1.1);
-    box-shadow: 0 0 0 2px #ffd966;
-}
-
-#moodNote {
-    width: 100%;
-    height: 80px;
-    margin: 1rem 0;
-    padding: 0.5rem;
-    border: 1px solid #ccc;
-    border-radius: 8px;
-    resize: vertical;
-}
-
-#saveMoodBtn {
-    background: #2c3e66;
-    color: white;
-    border: none;
-    padding: 0.5rem 1rem;
-    border-radius: 20px;
-    cursor: pointer;
-}
-
-@media (max-width: 500px) {
     .role-selector {
-        flex-direction: column;
-        align-items: flex-start;
+        padding: 4px 8px;
+        gap: 4px;
+    }
+    .role-selector span { font-size: 0.75em; }
+    .role-buttons button {
+        font-size: 10px;
+        padding: 2px 8px;
     }
 
+    .action-buttons {
+        padding: 4px 8px;
+        gap: 4px;
+    }
+    .action-btn, .forum-link, .tariff-link, .donate-link {
+        font-size: 10px;
+        padding: 3px 8px;
+    }
+
+    .chat-window {
+        padding: 10px;
+        gap: 6px;
+    }
     .message {
+        font-size: 0.9em;
+        padding: 8px 12px;
         max-width: 90%;
     }
 
-    .forum-link {
-        background: #5a6e8a;
-        color: white;
-        text-decoration: none;
-        padding: 0.4rem 0.8rem;
-        border-radius: 20px;
-        font-size: 0.85rem;
+    .input-area {
+        padding: 6px 8px;
+    }
+    .input-area input {
+        font-size: 14px;
+        padding: 8px 12px;
+    }
+    .input-area button {
+        font-size: 14px;
+        padding: 8px 14px;
+    }
+    .voice-btn {
+        font-size: 1em;
+        padding: 0 8px;
+    }
+
+    .modal-content {
+        margin: 20% auto;
+        padding: 15px;
     }
 }

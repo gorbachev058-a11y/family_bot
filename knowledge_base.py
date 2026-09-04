@@ -74,9 +74,24 @@ class KnowledgeBase:
         # Нормализуем для поиска по косинусной близости
         faiss.normalize_L2(embeddings)
 
-        # Создаём индекс на внутреннем произведении (эквивалент косинусной близости после нормализации)
-        self.index = faiss.IndexFlatIP(embeddings.shape[1])
-        self.index.add(embeddings)
+        dim = embeddings.shape[1]
+        ntotal = len(embeddings)
+
+        # Если чанков мало (менее 20), используем точный поиск
+        if ntotal < 20:
+            self.index = faiss.IndexFlatIP(dim)
+            self.index.add(embeddings)
+            logger.info(f"Использован точный поиск (FlatIP), {ntotal} чанков.")
+        else:
+            # Используем IVF для ускорения
+            nlist = min(100, max(1, ntotal // 10))  # количество кластеров
+            quantizer = faiss.IndexFlatIP(dim)
+            self.index = faiss.IndexIVFFlat(quantizer, dim, nlist, faiss.METRIC_INNER_PRODUCT)
+            # Обучаем индекс на всех векторах
+            self.index.train(embeddings)
+            self.index.add(embeddings)
+            logger.info(f"Использован IVF-индекс с {nlist} кластерами, {ntotal} чанков.")
+
         logger.info(f"Индекс построен, {len(self.chunks)} чанков.")
 
     def hybrid_search(self, query: str, top_k: int = 5, keyword_weight: float = 0.3):

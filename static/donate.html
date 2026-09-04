@@ -1,13 +1,52 @@
 <!DOCTYPE html>
-<html>
-<head><title>Поддержать проект</title></head>
-<body style="text-align:center; padding:50px;">
-    <h1>Спасибо за поддержку! ☕</h1>
-    <p>Выберите сумму для доната:</p>
-    <button onclick="window.location.href='https://doctorhauz.ru/donate?amount=100'">100 ₽</button>
-    <button onclick="window.location.href='https://doctorhauz.ru/donate?amount=500'">500 ₽</button>
-    <p>Или введите свою сумму:</p>
-    <input type="number" id="customAmount" placeholder="Сумма">
-    <button onclick="window.location.href='https://doctorhauz.ru/donate?amount='+document.getElementById('customAmount').value">Перейти к оплате</button>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Донат</title>
+    <style>
+        body { background: #1a1a2e; color: #e0e0e0; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        .container { background: #16213e; padding: 2rem; border-radius: 20px; max-width: 400px; width: 100%; text-align: center; }
+        input, button { padding: 10px; margin: 10px 0; border-radius: 8px; border: none; width: 100%; }
+        input { background: #0f3460; color: white; }
+        button { background: #e94560; color: white; cursor: pointer; font-weight: bold; }
+        button:hover { background: #c0392b; }
+        a { color: #4a8cff; text-decoration: none; display: block; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>❤️ Поддержать проект</h1>
+        <p>Введите сумму (мин. 50 ₽):</p>
+        <input type="number" id="amount" value="100" min="50">
+        <button id="donateBtn">Пожертвовать</button>
+        <a href="/">Вернуться в чат</a>
+    </div>
+    <script>
+        document.getElementById('donateBtn').addEventListener('click', async () => {
+            const amount = parseFloat(document.getElementById('amount').value);
+            if (amount < 50) { alert('Минимальная сумма 50 ₽'); return; }
+            let user_id = localStorage.getItem('userId');
+            if (!user_id) {
+                user_id = 'guest_' + Date.now();
+                localStorage.setItem('userId', user_id);
+            }
+            try {
+                const response = await fetch('/create_donation', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ amount, user_id: parseInt(user_id) })
+                });
+                const data = await response.json();
+                if (data.confirmation_url) {
+                    window.location.href = data.confirmation_url;
+                } else {
+                    alert('Ошибка: ' + JSON.stringify(data));
+                }
+            } catch (err) {
+                alert('Ошибка соединения: ' + err.message);
+            }
+        });
+    </script>
 </body>
 </html>
