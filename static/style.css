@@ -267,4 +267,23 @@ footer a:hover { text-decoration: underline; }
         margin: 20% auto;
         padding: 15px;
     }
+    /* ===== МЕНЮ АВТОРИЗАЦИИ ===== */
+    #auth-menu {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    font-size: 0.8em;
+    margin-bottom: 5px;
+    }
+    #auth-menu a {
+    color: #4a8cff;
+    text-decoration: none;
+    cursor: pointer;
+    }
+    #auth-menu a:hover {
+    text-decoration: underline;
+    }
+    #auth-menu span {
+    color: #ccc;
+    }
 }

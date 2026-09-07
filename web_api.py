@@ -16,6 +16,8 @@ from rate_limit import limiter, setup_rate_limiting
 from slowapi.errors import RateLimitExceeded
 from fastapi.responses import JSONResponse
 from alert import init_alert_bot, send_alert
+from dotenv import load_dotenv
+load_dotenv()
 
 # ЮKassa
 from yookassa import Configuration, Payment
@@ -78,8 +80,14 @@ logger.setLevel(logging.INFO)
 # Конфигурация ЮKassa
 YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "test")
 YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY", "test")
-Configuration.account_id = YOOKASSA_SHOP_ID
-Configuration.secret_key = YOOKASSA_SECRET_KEY
+logger.info(f"ЮKassa shop_id: {YOOKASSA_SHOP_ID}, secret_key: {YOOKASSA_SECRET_KEY[:10]}...")
+
+if not YOOKASSA_SHOP_ID or not YOOKASSA_SECRET_KEY:
+    logger.error("ЮKassa credentials не найдены в .env")
+else:
+    Configuration.account_id = YOOKASSA_SHOP_ID
+    Configuration.secret_key = YOOKASSA_SECRET_KEY
+
 
 # Инициализация приложения
 app = FastAPI(title="Доктор Хауз Web API")
@@ -337,8 +345,12 @@ async def create_premium_payment(request: Request):
     try:
         data = await request.json()
         user_id = data.get("user_id")
-        if not user_id:
+        if user_id is None or user_id == "" or user_id == "null" or user_id == "undefined":
             raise HTTPException(400, "user_id обязателен")
+        try:
+            user_id = int(user_id)
+        except ValueError:
+            raise HTTPException(400, "user_id должен быть числом")
         conn = sqlite3.connect("data/users.db")
         c = conn.cursor()
         c.execute("SELECT id FROM users WHERE id=?", (user_id,))
@@ -718,8 +730,9 @@ async def add_comment_to_kb(comment_id: int, user_id: int, tags: List[str]):
     return {"status": "added", "message": "Чанк добавлен в базу знаний и индекс обновлён"}
 
 # ========================
-# Тесты (без изменений)
+# Тесты (исправленная версия)
 # ========================
+
 @app.get("/tests/list")
 async def get_tests_list():
     tests = [
@@ -733,36 +746,49 @@ async def get_tests_list():
 
 @app.get("/tests/{test_id}/questions")
 async def get_test_questions(test_id: str):
+    # Единая структура для всех тестов: объект с полями questions и scale
     questions_map = {
-        "anxiety": [
-            "Я часто испытываю беспокойство без видимой причины.",
-            "Мне трудно заснуть из-за тревожных мыслей.",
-            "Я легко раздражаюсь по пустякам.",
-            "Мне кажется, что окружающие относятся ко мне негативно.",
-            "Я часто чувствую внутреннее напряжение."
-        ],
-        "compatibility": [
-            "Мы с партнёром легко находим общий язык в спорных вопросах.",
-            "Наши взгляды на жизнь совпадают.",
-            "Мы поддерживаем друг друга в трудных ситуациях.",
-            "Нам нравится проводить время вместе.",
-            "Мы уважаем личные границы друг друга."
-        ],
-        "parenting": [
-            "Я часто объясняю ребёнку, почему его поведение неправильно.",
-            "Я редко хвалю ребёнка, чтобы он не зазнавался.",
-            "Я всегда прислушиваюсь к мнению ребёнка.",
-            "Я строго контролирую, с кем дружит мой ребёнок.",
-            "Я поощряю ребёнка за любые успехи."
-        ],
-        "self_acceptance": [
-            "Я принимаю себя таким, какой я есть.",
-            "Мне трудно прощать себе ошибки.",
-            "Я считаю себя достойным любви и уважения.",
-            "Я часто критикую себя за недостатки.",
-            "Я доволен своей внешностью."
-        ],
-         "self_esteem": {
+        "anxiety": {
+            "questions": [
+                "Я часто испытываю беспокойство без видимой причины.",
+                "Мне трудно заснуть из-за тревожных мыслей.",
+                "Я легко раздражаюсь по пустякам.",
+                "Мне кажется, что окружающие относятся ко мне негативно.",
+                "Я часто чувствую внутреннее напряжение."
+            ],
+            "scale": "1-5"
+        },
+        "compatibility": {
+            "questions": [
+                "Мы с партнёром легко находим общий язык в спорных вопросах.",
+                "Наши взгляды на жизнь совпадают.",
+                "Мы поддерживаем друг друга в трудных ситуациях.",
+                "Нам нравится проводить время вместе.",
+                "Мы уважаем личные границы друг друга."
+            ],
+            "scale": "1-5"
+        },
+        "parenting": {
+            "questions": [
+                "Я часто объясняю ребёнку, почему его поведение неправильно.",
+                "Я редко хвалю ребёнка, чтобы он не зазнавался.",
+                "Я всегда прислушиваюсь к мнению ребёнка.",
+                "Я строго контролирую, с кем дружит мой ребёнок.",
+                "Я поощряю ребёнка за любые успехи."
+            ],
+            "scale": "1-5"
+        },
+        "self_acceptance": {
+            "questions": [
+                "Я принимаю себя таким, какой я есть.",
+                "Мне трудно прощать себе ошибки.",
+                "Я считаю себя достойным любви и уважения.",
+                "Я часто критикую себя за недостатки.",
+                "Я доволен своей внешностью."
+            ],
+            "scale": "1-5"
+        },
+        "self_esteem": {
             "questions": [
                 "Поставьте себе оценку от 1 до 10, как вы оцениваете свою уверенность в себе.",
                 "Поставьте оценку своей способности достигать целей.",
@@ -778,7 +804,7 @@ async def get_test_questions(test_id: str):
     return {
         "test_id": test_id,
         "questions": questions_map[test_id]["questions"],
-        "scale": questions_map[test_id].get("scale", "1-5")
+        "scale": questions_map[test_id]["scale"]
     }
 
 @app.post("/tests/submit")
@@ -788,34 +814,98 @@ async def submit_test(testsub_req: TestSubmitRequest, request: Request):
         total = sum(testsub_req.answers)
         avg = total / len(testsub_req.answers)
         if testsub_req.test_id == "anxiety":
-            if avg <= 2: result = "Низкий уровень тревожности. Вы спокойны и уравновешены."
-            elif avg <= 3.5: result = "Средний уровень тревожности. Рекомендуется обратить внимание на методы релаксации."
-            else: result = "Высокий уровень тревожности. Рекомендуется обратиться к психологу."
+            if avg <= 2:
+                result = "Низкий уровень тревожности. Вы спокойны и уравновешены."
+            elif avg <= 3.5:
+                result = "Средний уровень тревожности. Рекомендуется обратить внимание на методы релаксации."
+            else:
+                result = "Высокий уровень тревожности. Рекомендуется обратиться к психологу."
         elif testsub_req.test_id == "compatibility":
-            if avg >= 4: result = "Высокая совместимость. У вас гармоничные отношения."
-            elif avg >= 3: result = "Средняя совместимость. Есть зоны для роста."
-            else: result = "Низкая совместимость. Рекомендуется работа над отношениями."
+            if avg >= 4:
+                result = "Высокая совместимость. У вас гармоничные отношения."
+            elif avg >= 3:
+                result = "Средняя совместимость. Есть зоны для роста."
+            else:
+                result = "Низкая совместимость. Рекомендуется работа над отношениями."
         elif testsub_req.test_id == "parenting":
-            if avg >= 4: result = "Демократичный стиль воспитания. Вы создаёте здоровую атмосферу."
-            elif avg >= 3: result = "Смешанный стиль. Обратите внимание на баланс контроля и поддержки."
-            else: result = "Авторитарный стиль. Возможно, стоит больше прислушиваться к ребёнку."
+            if avg >= 4:
+                result = "Демократичный стиль воспитания. Вы создаёте здоровую атмосферу."
+            elif avg >= 3:
+                result = "Смешанный стиль. Обратите внимание на баланс контроля и поддержки."
+            else:
+                result = "Авторитарный стиль. Возможно, стоит больше прислушиваться к ребёнку."
         elif testsub_req.test_id == "self_acceptance":
-            if avg >= 4: result = "Высокий уровень самопринятия. Вы уверены в себе."
-            elif avg >= 3: result = "Средний уровень. Работайте над любовью к себе."
-            else: result = "Низкий уровень самопринятия. Рекомендуется консультация психолога."
+            if avg >= 4:
+                result = "Высокий уровень самопринятия. Вы уверены в себе."
+            elif avg >= 3:
+                result = "Средний уровень. Работайте над любовью к себе."
+            else:
+                result = "Низкий уровень самопринятия. Рекомендуется консультация психолога."
         elif testsub_req.test_id == "self_esteem":
-            if avg >= 8: result = "Высокая самооценка. Вы адекватно оцениваете свои возможности."
-            elif avg >= 5: result = "Средняя самооценка. Есть над чем работать."
-            else: result = "Низкая самооценка. Важно развивать уверенность."
-        else: result = "Спасибо за прохождение теста!"
+            if avg >= 8:
+                result = "Высокая самооценка. Вы адекватно оцениваете свои возможности."
+            elif avg >= 5:
+                result = "Средняя самооценка. Есть над чем работать."
+            else:
+                result = "Низкая самооценка. Важно развивать уверенность."
+        else:
+            result = "Спасибо за прохождение теста!"
+
+        # Сохраняем результат в БД (добавляем)
+        import json
+        conn = sqlite3.connect("data/users.db")
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS test_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                test_id TEXT NOT NULL,
+                answers TEXT,
+                result TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        c.execute("INSERT INTO test_results (user_id, test_id, answers, result) VALUES (?, ?, ?, ?)",
+                  (testsub_req.user_id, testsub_req.test_id, json.dumps(testsub_req.answers), result))
+        conn.commit()
+        conn.close()
+
         return {"result": result}
+
+    # Если test_handlers доступны – используем их (и тоже сохраняем)
     try:
-        if testsub_req.test_id == "anxiety": result = calculate_anxiety(testsub_req.answers)
-        elif testsub_req.test_id == "compatibility": result = calculate_compatibility(testsub_req.answers)
-        elif testsub_req.test_id == "parenting": result = calculate_parenting_style(testsub_req.answers)
-        elif testsub_req.test_id == "self_acceptance": result = calculate_self_acceptance(testsub_req.answers)
-        elif testsub_req.test_id == "self_esteem": result = calculate_self_esteem(testsub_req.answers)
-        else: raise HTTPException(404, "Тест не найден")
+        if testsub_req.test_id == "anxiety":
+            result = calculate_anxiety(testsub_req.answers)
+        elif testsub_req.test_id == "compatibility":
+            result = calculate_compatibility(testsub_req.answers)
+        elif testsub_req.test_id == "parenting":
+            result = calculate_parenting_style(testsub_req.answers)
+        elif testsub_req.test_id == "self_acceptance":
+            result = calculate_self_acceptance(testsub_req.answers)
+        elif testsub_req.test_id == "self_esteem":
+            result = calculate_self_esteem(testsub_req.answers)
+        else:
+            raise HTTPException(404, "Тест не найден")
+
+        # Сохраняем результат
+        import json
+        conn = sqlite3.connect("data/users.db")
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS test_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                test_id TEXT NOT NULL,
+                answers TEXT,
+                result TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        c.execute("INSERT INTO test_results (user_id, test_id, answers, result) VALUES (?, ?, ?, ?)",
+                  (testsub_req.user_id, testsub_req.test_id, json.dumps(testsub_req.answers), result))
+        conn.commit()
+        conn.close()
+
         return {"result": result}
     except Exception as e:
         logger.exception("Ошибка при расчёте теста")
