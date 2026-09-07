@@ -82,36 +82,31 @@
 
     <script>
         document.querySelectorAll('.btn-pay[data-amount]').forEach(btn => {
-    btn.addEventListener('click', async function() {
-        const amount = parseFloat(this.dataset.amount);
-        let user_id = localStorage.getItem('userId');
-        if (!user_id) {
-            user_id = 'guest_' + Date.now();
-            localStorage.setItem('userId', user_id);
-        }
-        // Преобразуем в число, чтобы быть уверенными
-        const userIdNum = parseInt(user_id);
-        if (isNaN(userIdNum)) {
-            alert('Ошибка: не удалось определить ID пользователя');
-            return;
-        }
-        try {
-            const response = await fetch('/create_premium_payment', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ user_id: userIdNum })
+            btn.addEventListener('click', async function() {
+                const amount = parseFloat(this.dataset.amount);
+                let user_id = localStorage.getItem('userId');
+                if (!user_id) {
+                    user_id = 'guest_' + Date.now();
+                    localStorage.setItem('userId', user_id);
+                }
+                // Отправляем user_id как есть (строка)
+                try {
+                    const response = await fetch('/create_premium_payment', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ user_id: user_id })
+                    });
+                    const data = await response.json();
+                    if (data.confirmation_url) {
+                        window.location.href = data.confirmation_url;
+                    } else {
+                        alert('Ошибка при создании платежа: ' + JSON.stringify(data));
+                    }
+                } catch (err) {
+                    alert('Ошибка соединения: ' + err.message);
+                }
             });
-            const data = await response.json();
-            if (data.confirmation_url) {
-                window.location.href = data.confirmation_url;
-            } else {
-                alert('Ошибка при создании платежа: ' + JSON.stringify(data));
-            }
-        } catch (err) {
-            alert('Ошибка соединения: ' + err.message);
-        }
-    });
-});
+        });
     </script>
 </body>
 </html>
